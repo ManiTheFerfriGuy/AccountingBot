@@ -18,125 +18,125 @@ _LANGUAGES = {
     "en": LanguagePack(
         code="en",
         texts={
-            "start_message": "Welcome to AccountingBot! Choose an option below.",
-            "add_person": "Add Person",
-            "add_debt": "Add Debt",
-            "pay_debt": "Pay Debt",
-            "history": "History",
-            "search": "Search",
-            "language": "Language",
+            "start_message": "Hello! I'm AccountingBot, your friendly finance assistant. What would you like to do today?",
+            "add_person": "Add a Contact",
+            "add_debt": "Log a Charge",
+            "pay_debt": "Record a Payment",
+            "history": "View History",
+            "search": "Find a Record",
+            "language": "Change Language",
             "cancel": "Cancel",
-            "enter_person_name": "Please send the person's name.",
-            "person_added": "{name} added with ID #{id}.",
-            "invalid_person_name": "Please send a non-empty name.",
-            "duplicate_person_name": '"{name}" already exists. Try another name.',
-            "enter_person_prompt": "Select a person using the buttons or send a name/ID.",
-            "no_people": "No people found. Add someone first!",
-            "enter_debt_amount": "Send the debt amount for {name} (positive number).",
-            "enter_debt_description": "Optionally send a description, or type /skip.",
-            "enter_payment_description": "Optionally send a description for this payment, or type /skip.",
-            "debt_recorded": "Debt recorded: {name} now owes {amount:.2f}. Total balance: {balance:.2f}.",
-            "enter_payment_amount": "Send the payment amount for {name} (positive number).",
-            "payment_recorded": "Payment recorded. {name}'s balance is now {balance:.2f}.",
-            "invalid_number": "Please send a valid positive number.",
-            "history_header": "Transaction history for {name}:",
+            "enter_person_name": "Please share the person's full name so I can add them.",
+            "person_added": "{name} has been added successfully with ID #{id}.",
+            "invalid_person_name": "That name looks empty. Please send a valid name.",
+            "duplicate_person_name": '"{name}" is already on your list. Try a different name.',
+            "enter_person_prompt": "Pick someone from the buttons below or send their name/ID.",
+            "no_people": "I haven't met anyone yet. Add a contact to get started!",
+            "enter_debt_amount": "How much does {name} owe? Please send a positive amount.",
+            "enter_debt_description": "Add a short note if you'd like, or type /skip to move on.",
+            "enter_payment_description": "Would you like to add a note for this payment? Send it now or type /skip.",
+            "debt_recorded": "All set! {name} now owes {amount:.2f}. Current balance: {balance:.2f}.",
+            "enter_payment_amount": "How much is {name} paying? Please send a positive amount.",
+            "payment_recorded": "Payment saved. {name}'s balance is now {balance:.2f}.",
+            "invalid_number": "That doesn't look like a positive number. Please try again.",
+            "history_header": "Here is the activity log for {name}:",
             "history_item_debt": "➕ {amount:.2f} — {description} ({date})",
             "history_item_payment": "➖ {amount:.2f} — {description} ({date})",
-            "history_empty": "No transactions recorded yet.",
-            "prompt_date_range": "Send a date range as YYYY-MM-DD,YYYY-MM-DD or type /skip.",
-            "invalid_date_range": "Invalid date range. Use YYYY-MM-DD,YYYY-MM-DD or /skip.",
-            "language_prompt": "Select your preferred language.",
-            "language_updated": "Language updated to {language}.",
-            "search_prompt": "Send a name or ID to search.",
-            "search_results": "Search results:",
-            "not_found": "No matching records found.",
-            "action_cancelled": "Action cancelled.",
-            "confirm_debt": "{name} will be charged {amount:.2f}. Confirm?",
-            "confirm_debt_with_description": "{name} will be charged {amount:.2f} for \"{description}\". Confirm?",
-            "confirm_payment": "{name} will pay {amount:.2f}. Confirm?",
-            "confirm_payment_with_description": "{name} will pay {amount:.2f} for \"{description}\". Confirm?",
-            "confirmed": "Confirmed!",
-            "dismiss": "Dismiss",
-            "back": "Back",
+            "history_empty": "No activity recorded just yet.",
+            "prompt_date_range": "Share a date range as YYYY-MM-DD,YYYY-MM-DD or type /skip to view everything.",
+            "invalid_date_range": "Hmm, that date range doesn't look right. Please use YYYY-MM-DD,YYYY-MM-DD or /skip.",
+            "language_prompt": "Please choose the language you'd like me to use.",
+            "language_updated": "Great! I'll continue in {language}.",
+            "search_prompt": "Send a name or ID and I'll look it up.",
+            "search_results": "Here’s what I found:",
+            "not_found": "I couldn't find a match.",
+            "action_cancelled": "No worries—I've cancelled that action.",
+            "confirm_debt": "Please confirm charging {name} for {amount:.2f}.",
+            "confirm_debt_with_description": "Please confirm charging {name} {amount:.2f} for \"{description}\".",
+            "confirm_payment": "Please confirm recording a payment of {amount:.2f} from {name}.",
+            "confirm_payment_with_description": "Please confirm recording a payment of {amount:.2f} from {name} for \"{description}\".",
+            "confirmed": "Done!",
+            "dismiss": "Close",
+            "back": "Go Back",
             "dashboard": "Dashboard",
-            "dashboard_summary": "📊 Dashboard Summary",
-            "total_debt": "Total debt",
+            "dashboard_summary": "📊 Snapshot Overview",
+            "total_debt": "Total charges",
             "total_payments": "Total payments",
             "outstanding_balance": "Outstanding balance",
-            "top_debtors": "Top debtors",
-            "no_debtors": "No outstanding debtors right now.",
+            "top_debtors": "Largest balances",
+            "no_debtors": "All clear—no outstanding balances!",
             "recent_transactions": "Recent activity",
-            "no_transactions": "No recent transactions.",
+            "no_transactions": "No recent activity to display.",
             "recent_transaction_debt": "➕ {name} — {amount:.2f} on {date} ({description})",
             "recent_transaction_payment": "➖ {name} — {amount:.2f} on {date} ({description})",
             "balance_debtor": "owes {amount:.2f}",
             "balance_creditor": "is owed {amount:.2f}",
             "balance_settled": "settled",
             "search_result_item": "{index}. {name} (#{id}) — {status} • {score}% match",
-            "search_suggestions": "No direct matches. Did you mean: {suggestions}?",
-            "search_filters_hint": "Tip: Try filters like \"balance>0\", \"debtors\", or an ID.",
+            "search_suggestions": "No direct matches. Perhaps you meant: {suggestions}?",
+            "search_filters_hint": "Tip: Try filters such as \"balance>0\", \"debtors\", or enter an ID.",
         },
     ),
     "fa": LanguagePack(
         code="fa",
         texts={
-            "start_message": "به AccountingBot خوش آمدید! یکی از گزینه‌ها را انتخاب کنید.",
-            "add_person": "افزودن شخص",
-            "add_debt": "ثبت بدهی",
-            "pay_debt": "پرداخت بدهی",
-            "history": "تاریخچه",
-            "search": "جستجو",
-            "language": "زبان",
+            "start_message": "سلام! من AccountingBot هستم، همراه مالی شما. امروز چه کمکی از دستم برمی‌آید؟",
+            "add_person": "افزودن مخاطب",
+            "add_debt": "ثبت بدهی جدید",
+            "pay_debt": "ثبت پرداخت",
+            "history": "مشاهده تاریخچه",
+            "search": "جستجوی سوابق",
+            "language": "تغییر زبان",
             "cancel": "انصراف",
-            "enter_person_name": "نام شخص را ارسال کنید.",
-            "person_added": "{name} با شناسه #{id} افزوده شد.",
-            "invalid_person_name": "لطفاً نام خالی ارسال نکنید.",
-            "duplicate_person_name": '"{name}" از قبل وجود دارد. نام دیگری انتخاب کنید.',
-            "enter_person_prompt": "با دکمه‌ها انتخاب کنید یا نام/شناسه را ارسال کنید.",
-            "no_people": "هیچ شخصی یافت نشد. ابتدا شخصی اضافه کنید!",
-            "enter_debt_amount": "مبلغ بدهی برای {name} را ارسال کنید (عدد مثبت).",
-            "enter_debt_description": "در صورت تمایل توضیح بدهید یا /skip را بفرستید.",
-            "enter_payment_description": "در صورت تمایل توضیح پرداخت را ارسال کنید یا /skip را وارد کنید.",
-            "debt_recorded": "بدهی ثبت شد: {name} اکنون {amount:.2f} بدهی دارد. مانده کل: {balance:.2f}.",
-            "enter_payment_amount": "مبلغ پرداخت برای {name} را ارسال کنید (عدد مثبت).",
-            "payment_recorded": "پرداخت ثبت شد. مانده {name} اکنون {balance:.2f} است.",
-            "invalid_number": "لطفاً یک عدد مثبت معتبر ارسال کنید.",
-            "history_header": "تاریخچه تراکنش‌های {name}:",
+            "enter_person_name": "لطفاً نام کامل شخص را برای افزودن ارسال کنید.",
+            "person_added": "{name} با شناسه #{id} با موفقیت افزوده شد.",
+            "invalid_person_name": "نام ارسال‌شده خالی است. لطفاً نام معتبری وارد کنید.",
+            "duplicate_person_name": '«{name}» قبلاً ثبت شده است. نام دیگری را امتحان کنید.',
+            "enter_person_prompt": "از میان دکمه‌ها انتخاب کنید یا نام/شناسه را ارسال نمایید.",
+            "no_people": "هنوز شخصی اضافه نشده است. لطفاً ابتدا یک مخاطب ایجاد کنید!",
+            "enter_debt_amount": "مبلغ بدهی {name} را ارسال کنید. عدد باید مثبت باشد.",
+            "enter_debt_description": "در صورت تمایل توضیح کوتاهی بنویسید یا برای عبور /skip را وارد کنید.",
+            "enter_payment_description": "اگر می‌خواهید برای این پرداخت توضیحی ثبت کنید بفرستید یا /skip را وارد کنید.",
+            "debt_recorded": "ثبت شد! {name} اکنون {amount:.2f} بدهکار است. مانده فعلی: {balance:.2f}.",
+            "enter_payment_amount": "مبلغ پرداخت {name} را ارسال کنید. عدد باید مثبت باشد.",
+            "payment_recorded": "پرداخت ذخیره شد. مانده {name} اکنون {balance:.2f} است.",
+            "invalid_number": "مقدار ارسال‌شده عدد مثبت معتبری نیست. دوباره امتحان کنید.",
+            "history_header": "گزارش فعالیت‌های {name}:",
             "history_item_debt": "➕ {amount:.2f} — {description} ({date})",
             "history_item_payment": "➖ {amount:.2f} — {description} ({date})",
-            "history_empty": "هیچ تراکنشی ثبت نشده است.",
-            "prompt_date_range": "بازه تاریخ را به صورت YYYY-MM-DD,YYYY-MM-DD ارسال یا /skip را وارد کنید.",
-            "invalid_date_range": "بازه تاریخ نامعتبر است. از قالب YYYY-MM-DD,YYYY-MM-DD یا /skip استفاده کنید.",
-            "language_prompt": "زبان دلخواه خود را انتخاب کنید.",
-            "language_updated": "زبان به {language} تغییر یافت.",
-            "search_prompt": "نام یا شناسه را برای جستجو ارسال کنید.",
-            "search_results": "نتایج جستجو:",
-            "not_found": "موردی پیدا نشد.",
-            "action_cancelled": "عملیات لغو شد.",
-            "confirm_debt": "{name} به مبلغ {amount:.2f} بدهکار می‌شود. تایید؟",
-            "confirm_debt_with_description": "{name} به مبلغ {amount:.2f} برای «{description}» بدهکار می‌شود. تایید؟",
-            "confirm_payment": "{name} مبلغ {amount:.2f} پرداخت می‌کند. تایید؟",
-            "confirm_payment_with_description": "{name} مبلغ {amount:.2f} برای «{description}» پرداخت می‌کند. تایید؟",
-            "confirmed": "تایید شد!",
+            "history_empty": "هنوز تراکنشی ثبت نشده است.",
+            "prompt_date_range": "بازه تاریخ را به صورت YYYY-MM-DD,YYYY-MM-DD ارسال کنید یا برای نمایش همه /skip را بنویسید.",
+            "invalid_date_range": "بازه تاریخ نامعتبر است. لطفاً از قالب YYYY-MM-DD,YYYY-MM-DD یا دستور /skip استفاده کنید.",
+            "language_prompt": "لطفاً زبان مورد نظرتان را انتخاب کنید.",
+            "language_updated": "عالی! از این پس به {language} ادامه می‌دهم.",
+            "search_prompt": "نام یا شناسه‌ای را که می‌خواهید جستجو کنم ارسال کنید.",
+            "search_results": "نتایج پیدا شده:",
+            "not_found": "نتیجه‌ای پیدا نکردم.",
+            "action_cancelled": "اشکالی ندارد؛ این عملیات لغو شد.",
+            "confirm_debt": "آیا ثبت بدهی {amount:.2f} برای {name} را تأیید می‌کنید؟",
+            "confirm_debt_with_description": "آیا ثبت بدهی {amount:.2f} برای {name} بابت «{description}» را تأیید می‌کنید؟",
+            "confirm_payment": "آیا ثبت پرداخت {amount:.2f} از سوی {name} را تأیید می‌کنید؟",
+            "confirm_payment_with_description": "آیا ثبت پرداخت {amount:.2f} از سوی {name} بابت «{description}» را تأیید می‌کنید؟",
+            "confirmed": "انجام شد!",
             "dismiss": "بستن",
             "back": "بازگشت",
             "dashboard": "داشبورد",
-            "dashboard_summary": "📊 خلاصه داشبورد",
-            "total_debt": "جمع بدهی",
+            "dashboard_summary": "📊 نمای کلی سریع",
+            "total_debt": "جمع بدهی‌ها",
             "total_payments": "جمع پرداخت‌ها",
-            "outstanding_balance": "مانده کل",
-            "top_debtors": "بیشترین بدهکاران",
-            "no_debtors": "بدهکار فعالی وجود ندارد.",
-            "recent_transactions": "تراکنش‌های اخیر",
-            "no_transactions": "تراکنش اخیر یافت نشد.",
+            "outstanding_balance": "مانده باز",
+            "top_debtors": "بیشترین مانده‌ها",
+            "no_debtors": "همه‌چیز صاف است؛ بدهی باز نداریم!",
+            "recent_transactions": "فعالیت‌های اخیر",
+            "no_transactions": "فعلاً تراکنش تازه‌ای وجود ندارد.",
             "recent_transaction_debt": "➕ {name} — {amount:.2f} در تاریخ {date} ({description})",
             "recent_transaction_payment": "➖ {name} — {amount:.2f} در تاریخ {date} ({description})",
             "balance_debtor": "بدهکار {amount:.2f}",
             "balance_creditor": "طلبکار {amount:.2f}",
             "balance_settled": "تسویه شده",
-            "search_result_item": "{index}. {name} (#{id}) — {status} • تطابق {score}٪",
-            "search_suggestions": "نتیجه‌ای یافت نشد. آیا منظور شما این بود: {suggestions}؟",
-            "search_filters_hint": "نکته: از فیلترهایی مانند «balance>0» یا «debtors» یا شناسه استفاده کنید.",
+            "search_result_item": "{index}. {name} (#{id}) — {status} • میزان تطابق {score}٪",
+            "search_suggestions": "نتیجه مستقیمی نبود. شاید منظور شما این گزینه‌هاست: {suggestions}؟",
+            "search_filters_hint": "نکته: می‌توانید از فیلترهایی مانند «balance>0»، «debtors» یا وارد کردن شناسه استفاده کنید.",
         },
     ),
 }

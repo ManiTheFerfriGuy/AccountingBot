@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from html import escape
 from typing import Optional
 
 from telegram import InlineKeyboardMarkup, Update, constants
@@ -460,10 +461,12 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         clear_workflow(context)
         return ConversationHandler.END
 
-    lines = [get_text("history_header", language).format(name=person.name)]
+    lines = [
+        get_text("history_header", language).format(name=escape(person.name))
+    ]
     for item in history:
         template = "history_item_payment" if item.is_payment else "history_item_debt"
-        description = item.description or "-"
+        description = escape(item.description) if item.description else "-"
         lines.append(
             get_text(template, language).format(
                 amount=abs(item.amount),

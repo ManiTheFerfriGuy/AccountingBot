@@ -21,8 +21,9 @@ def main_menu(language: str) -> ReplyKeyboardMarkup:
             ],
             [
                 get_text("search", language),
-                get_text("language", language),
+                get_text("dashboard", language),
             ],
+            [get_text("language", language)],
         ],
         resize_keyboard=True,
     )

@@ -4,12 +4,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sqlite3
+import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import AsyncIterator, List, Optional, Sequence
+from typing import AsyncIterator, List, Optional, Sequence, Tuple
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +39,67 @@ class Transaction:
     @property
     def is_payment(self) -> bool:
         return self.amount < 0
+
+
+@dataclass(slots=True)
+class SearchResult:
+    """Represents a single person match returned by ``search_people``."""
+
+    person: Person
+    balance: float
+    score: float
+    matched_keywords: Tuple[str, ...]
+
+
+@dataclass(slots=True)
+class SearchResponse:
+    """Full response returned by ``search_people`` including suggestions."""
+
+    query: str
+    matches: List[SearchResult]
+    suggestions: List[str]
+
+
+@dataclass(slots=True)
+class DashboardTotals:
+    """Aggregated totals used on the dashboard screen."""
+
+    total_debt: float
+    total_payments: float
+    outstanding_balance: float
+
+
+@dataclass(slots=True)
+class DebtorSummary:
+    """Represents a debtor entry with their outstanding balance."""
+
+    person: Person
+    balance: float
+
+
+@dataclass(slots=True)
+class RecentActivity:
+    """Represents a recent transaction alongside the person's name."""
+
+    transaction: Transaction
+    person_name: str
+
+
+@dataclass(slots=True)
+class DashboardSummary:
+    """Container for dashboard information."""
+
+    totals: DashboardTotals
+    top_debtors: List[DebtorSummary]
+    recent_transactions: List[RecentActivity]
+
+
+class InvalidPersonNameError(ValueError):
+    """Raised when a provided person name is empty or invalid."""
+
+
+class PersonAlreadyExistsError(ValueError):
+    """Raised when trying to create a person with a duplicate name."""
 
 
 class Database:
@@ -98,13 +162,19 @@ class Database:
         return conn
 
     async def add_person(self, name: str) -> Person:
+        clean_name = name.strip()
+        if not clean_name:
+            raise InvalidPersonNameError("Name cannot be empty")
         async with self._connection() as conn:
-            cursor = await asyncio.to_thread(
-                conn.execute,
-                "INSERT INTO people (name) VALUES (?)",
-                (name.strip(),),
-            )
-            await asyncio.to_thread(conn.commit)
+            try:
+                cursor = await asyncio.to_thread(
+                    conn.execute,
+                    "INSERT INTO people (name) VALUES (?)",
+                    (clean_name,),
+                )
+                await asyncio.to_thread(conn.commit)
+            except sqlite3.IntegrityError as exc:
+                raise PersonAlreadyExistsError(clean_name) from exc
             person_id = cursor.lastrowid
         LOGGER.info("Added person %s with id %s", name, person_id)
         return await self.get_person(person_id)
@@ -125,29 +195,167 @@ class Database:
             created_at=datetime.fromisoformat(result["created_at"]),
         )
 
-    async def search_people(self, query: str, limit: int = 25) -> List[Person]:
-        like = f"%{query.strip()}%"
+    async def search_people(self, query: str, limit: int = 25) -> SearchResponse:
+        """Search for people using fuzzy matching and optional filters.
+
+        The query accepts special tokens:
+
+        - ``balance>NUMBER`` / ``balance<NUMBER`` / ``balance=NUMBER``
+        - ``debtors`` (alias for ``balance>0``)
+        - ``creditors`` (alias for ``balance<0``)
+
+        Returns a :class:`SearchResponse` containing scored matches and
+        optional suggestions.
+        """
+
+        query = query.strip()
+        tokens = [token for token in re.split(r"\s+", query) if token]
+        ids: List[int] = []
+        keywords: List[str] = []
+        balance_filter: Optional[Tuple[str, Optional[float]]] = None
+
+        balance_pattern = re.compile(r"balance(?P<op>[<>]=?|=)(?P<value>-?\d+(?:\.\d+)?)")
+
+        for token in tokens:
+            normalized = token.strip().lower()
+            if not normalized:
+                continue
+            if normalized.startswith("#"):
+                normalized = normalized[1:]
+            if normalized.isdigit():
+                ids.append(int(normalized))
+                continue
+            if normalized in {"debtors", "balance>0", "positive"}:
+                balance_filter = (">", 0.0)
+                continue
+            if normalized in {"creditors", "balance<0", "negative"}:
+                balance_filter = ("<", 0.0)
+                continue
+            if normalized in {"settled", "balance=0", "zero"}:
+                balance_filter = ("=", 0.0)
+                continue
+            balance_match = balance_pattern.fullmatch(normalized)
+            if balance_match:
+                op = balance_match.group("op")
+                value = float(balance_match.group("value"))
+                balance_filter = (op, value)
+                continue
+            keywords.append(normalized)
+
+        fetch_limit = max(limit * 4, 50)
+
+        sql = [
+            "SELECT p.id, p.name, p.created_at, COALESCE(SUM(t.amount), 0) AS balance",
+            "FROM people p",
+            "LEFT JOIN transactions t ON t.person_id = p.id",
+        ]
+        params: List[object] = []
+        conditions: List[str] = []
+
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conditions.append(f"p.id IN ({placeholders})")
+            params.extend(ids)
+
+        for keyword in keywords:
+            conditions.append("LOWER(p.name) LIKE ?")
+            params.append(f"%{keyword}%")
+
+        if conditions:
+            sql.append("WHERE " + " AND ".join(conditions))
+
+        sql.append("GROUP BY p.id")
+
+        if balance_filter:
+            operator, operand = balance_filter
+            if operator == ">":
+                sql.append("HAVING balance > ?")
+                params.append(operand if operand is not None else 0.0)
+            elif operator == "<":
+                sql.append("HAVING balance < ?")
+                params.append(operand if operand is not None else 0.0)
+            elif operator == ">=":
+                sql.append("HAVING balance >= ?")
+                params.append(operand if operand is not None else 0.0)
+            elif operator == "<=":
+                sql.append("HAVING balance <= ?")
+                params.append(operand if operand is not None else 0.0)
+            elif operator == "=":
+                sql.append("HAVING ABS(balance - ?) < 1e-6")
+                params.append(operand if operand is not None else 0.0)
+
+        sql.append("ORDER BY ABS(balance) DESC, p.name ASC")
+        sql.append("LIMIT ?")
+        params.append(fetch_limit)
+
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
-                conn.execute,
-                """
-                SELECT id, name, created_at
-                FROM people
-                WHERE name LIKE ? OR CAST(id AS TEXT) LIKE ?
-                ORDER BY name ASC
-                LIMIT ?
-                """,
-                (like, like, limit),
+                conn.execute, " ".join(sql), tuple(params)
             )
             rows = await asyncio.to_thread(cursor.fetchall)
-        return [
-            Person(
-                id=row["id"],
-                name=row["name"],
-                created_at=datetime.fromisoformat(row["created_at"]),
+
+            matches: List[SearchResult] = []
+            suggestions: List[str] = []
+
+            norm_query = _normalize_text(" ".join(keywords) if keywords else query)
+            for row in rows:
+                person = Person(
+                    id=row["id"],
+                    name=row["name"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                )
+                balance = float(row["balance"] or 0.0)
+                norm_name = _normalize_text(person.name)
+                matched_keywords = tuple(
+                    keyword for keyword in keywords if keyword in norm_name
+                )
+                base_score = (
+                    SequenceMatcher(None, norm_name, norm_query).ratio()
+                    if norm_query
+                    else 1.0
+                )
+                if ids and person.id in ids:
+                    base_score += 0.6
+                prefix_bonus = sum(0.15 for keyword in matched_keywords if norm_name.startswith(keyword))
+                containment_bonus = sum(0.05 for keyword in matched_keywords)
+                score = base_score + prefix_bonus + containment_bonus
+                matches.append(
+                    SearchResult(
+                        person=person,
+                        balance=balance,
+                        score=score,
+                        matched_keywords=matched_keywords,
+                    )
+                )
+
+            matches.sort(
+                key=lambda item: (
+                    -item.score,
+                    -abs(item.balance),
+                    item.person.name.casefold(),
+                )
             )
-            for row in rows
-        ]
+            matches = matches[:limit]
+
+            if not matches and keywords:
+                suggest_cursor = await asyncio.to_thread(
+                    conn.execute,
+                    "SELECT name FROM people ORDER BY created_at DESC LIMIT ?",
+                    (200,),
+                )
+                suggest_rows = await asyncio.to_thread(suggest_cursor.fetchall)
+                scored_suggestions: List[Tuple[float, str]] = []
+                for suggestion_row in suggest_rows:
+                    suggestion_name = suggestion_row["name"]
+                    ratio = SequenceMatcher(
+                        None, _normalize_text(suggestion_name), norm_query
+                    ).ratio()
+                    if ratio >= 0.45:
+                        scored_suggestions.append((ratio, suggestion_name))
+                scored_suggestions.sort(key=lambda item: item[0], reverse=True)
+                suggestions = [name for _, name in scored_suggestions[:5]]
+
+        return SearchResponse(query=query, matches=matches, suggestions=suggestions)
 
     async def list_people(self, limit: int = 50, offset: int = 0) -> List[Person]:
         async with self._connection() as conn:
@@ -321,3 +529,107 @@ class Database:
             )
             rows = await asyncio.to_thread(cursor.fetchall)
         return rows
+
+    async def get_dashboard_summary(
+        self, top: int = 3, recent: int = 5
+    ) -> DashboardSummary:
+        """Return aggregated information used for the dashboard view."""
+
+        async with self._connection() as conn:
+            totals_cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS total_debt,
+                    COALESCE(SUM(CASE WHEN amount < 0 THEN amount END), 0) AS total_payments,
+                    COALESCE(SUM(amount), 0) AS outstanding
+                FROM transactions
+                """,
+            )
+            totals_row = await asyncio.to_thread(totals_cursor.fetchone)
+
+            debtors_cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                SELECT
+                    p.id,
+                    p.name,
+                    p.created_at,
+                    COALESCE(SUM(t.amount), 0) AS balance
+                FROM people p
+                LEFT JOIN transactions t ON t.person_id = p.id
+                GROUP BY p.id
+                HAVING balance > 0
+                ORDER BY balance DESC, p.name ASC
+                LIMIT ?
+                """,
+                (top,),
+            )
+            debtor_rows = await asyncio.to_thread(debtors_cursor.fetchall)
+
+            recent_cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                SELECT
+                    t.id,
+                    t.person_id,
+                    p.name AS person_name,
+                    t.amount,
+                    t.description,
+                    t.created_at
+                FROM transactions t
+                JOIN people p ON p.id = t.person_id
+                ORDER BY t.created_at DESC
+                LIMIT ?
+                """,
+                (recent,),
+            )
+            recent_rows = await asyncio.to_thread(recent_cursor.fetchall)
+
+        totals = DashboardTotals(
+            total_debt=float(totals_row["total_debt"]) if totals_row else 0.0,
+            total_payments=float(totals_row["total_payments"]) if totals_row else 0.0,
+            outstanding_balance=float(totals_row["outstanding"]) if totals_row else 0.0,
+        )
+
+        top_debtors = [
+            DebtorSummary(
+                person=Person(
+                    id=row["id"],
+                    name=row["name"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                ),
+                balance=float(row["balance"] or 0.0),
+            )
+            for row in debtor_rows
+        ]
+
+        recent_transactions = [
+            RecentActivity(
+                transaction=Transaction(
+                    id=row["id"],
+                    person_id=row["person_id"],
+                    amount=row["amount"],
+                    description=row["description"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                ),
+                person_name=row["person_name"],
+            )
+            for row in recent_rows
+        ]
+
+        return DashboardSummary(
+            totals=totals,
+            top_debtors=top_debtors,
+            recent_transactions=recent_transactions,
+        )
+
+
+def _normalize_text(value: str) -> str:
+    """Normalize a string for case-insensitive fuzzy comparisons."""
+
+    normalized = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        char for char in normalized if not unicodedata.combining(char)
+    )
+    return without_marks.casefold()

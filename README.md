@@ -1,108 +1,80 @@
-# AccountingBot
+# AccountingBot cPanel Deployment Guide
 
-AccountingBot is a multilingual Telegram bot that helps you track people, debts, and payments while remaining friendly to cPanel deployments. The bot stores data in SQLite, presents an organized keyboard-driven interface, and can optionally reach cPanel's UAPI for remote automation.
+This guide walks you through hosting AccountingBot on a cPanel server. It assumes your hosting plan provides SSH access and the **Setup Python App** feature (also called Application Manager). If any option mentioned below is missing, ask your hosting provider to enable it before continuing.
 
-## Feature highlights
-- People registry with automatic numeric IDs and name/ID search.
-- Debt and repayment workflows that confirm actions before writing to the database.
-- Transaction history browser with optional date filtering.
-- English/Persian language toggle for the entire interface.
-- Inline and reply keyboards that keep the chat experience tidy.
-- SQLite storage with WAL mode so the bot remains lightweight and portable.
-- Structured logging to stdout and a log file for auditing purposes.
-- cPanel UAPI client (Optional) for running remote administrative actions.
+## 1. Create the Python application
+1. Log in to cPanel and open **Setup Python App**.
+2. Click **Create Application** and choose:
+   - **Python version:** Python 3.10 or newer.
+   - **Application root:** `accountingbot` (or any empty folder).
+   - **Application URL:** leave blank because AccountingBot is a Telegram bot.
+   - **Startup file / WSGI file:** leave the default for now.
+3. Click **Create**. cPanel provisions a virtual environment and shows the path in the **Application Root** card. Copy the **Virtual environment** path; you will use it in the next steps.
 
-## Step-by-step setup
+## 2. Upload the project
+You can use either the cPanel Terminal, SSH, or Git Version Control. One simple option is the Terminal:
+```bash
+cd ~/accountingbot        # replace with the Application Root you selected
+rm -rf *
+git clone https://github.com/your-org/AccountingBot.git .
+```
+If Git is unavailable, upload the repository ZIP through **File Manager** and extract it inside the Application Root.
 
-1. **Install prerequisites**
-   ```bash
-   python3 --version
-   sudo apt-get update
-   sudo apt-get install -y python3 python3-venv python3-pip git
+## 3. Install dependencies
+Still inside the Application Root, activate the cPanel-created virtual environment and install packages:
+```bash
+source ~/virtualenv/accountingbot/3.10/bin/activate  # adjust path & version shown in cPanel
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+When you are done, keep the environment path handy; you will need it whenever you run manual commands.
+
+## 4. Configure environment variables
+Create a `.env` file in the Application Root:
+```bash
+cat > .env <<'ENV'
+BOT_TOKEN=replace-with-your-telegram-token
+DATABASE_PATH=accounting.db
+LOG_FILE=accounting_bot.log
+CPANEL_HOST=
+CPANEL_USERNAME=
+CPANEL_API_TOKEN=
+CPANEL_VERIFY_SSL=true
+ENV
+```
+- `BOT_TOKEN` is required. Obtain it from @BotFather.
+- Leave the cPanel-related values empty unless you plan to use the optional UAPI helpers.
+- Keep `.env` out of version control.
+
+## 5. Tell cPanel how to start the bot
+1. Return to **Setup Python App** and click **Edit** on the application you created.
+2. In **Startup file**, enter `start.py`.
+3. Create `start.py` in the Application Root with the following content:
+   ```python
+   import os
+   from pathlib import Path
+
+   from dotenv import load_dotenv
+
+   BASE_DIR = Path(__file__).resolve().parent
+   load_dotenv(BASE_DIR / ".env")
+
+   if __name__ == "__main__":
+       os.system("python -m accountingbot.bot")
    ```
+4. Set **Application startup command** to `python start.py`.
+5. Click **Save** and then **Restart** to make cPanel run the bot.
 
-2. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-org/AccountingBot.git
-   cd AccountingBot
-   ```
+cPanel will now execute `python start.py` through Passenger whenever it detects the application needs to restart (for example, after saving changes or clicking **Restart**).
 
-3. **Create and activate a virtual environment**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+## 6. Manage the running bot
+- **Restarting:** Use the **Restart** button in **Setup Python App** after editing files or updating dependencies.
+- **Viewing logs:** Click **View Logs** inside **Setup Python App** or open `~/accountingbot/accounting_bot.log` via SSH.
+- **Updating code:** Pull the latest changes with `git pull` (or upload new files) inside the Application Root, reinstall dependencies if `requirements.txt` changed, and restart the app.
+- **Database location:** The SQLite database lives at `DATABASE_PATH`. Download it via SFTP for backups, or connect with `sqlite3 accounting.db` from SSH while the virtual environment is active.
 
-4. **Install Python dependencies**
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+## 7. Optional cPanel automation
+If you set the `CPANEL_HOST`, `CPANEL_USERNAME`, and `CPANEL_API_TOKEN` variables, the bot's `accountingbot/cpanel.py` module can call UAPI endpoints. Ensure the API token has only the permissions you need and keep it secret.
 
-5. **Configure environment variables**
-   ```bash
-   cat > .env <<'ENV'
-   BOT_TOKEN=replace-with-your-telegram-token
-   DATABASE_PATH=accounting.db
-   LOG_FILE=accounting_bot.log
-   CPANEL_HOST=
-   CPANEL_USERNAME=
-   CPANEL_API_TOKEN=
-   CPANEL_VERIFY_SSL=true
-   ENV
-   ```
-   - `BOT_TOKEN` is required and must match the token issued by BotFather.
-   - `DATABASE_PATH`, `LOG_FILE`, `CPANEL_HOST`, `CPANEL_USERNAME`, `CPANEL_API_TOKEN`, and `CPANEL_VERIFY_SSL` are optional overrides. Leave them blank or remove them if you do not need them.
-
-6. **Load configuration before running commands**
-   ```bash
-   export $(grep -v '^#' .env | xargs)
-   ```
-   Use the command above in every new shell session or rely on tooling such as `direnv` to load the `.env` file automatically.
-
-7. **Run the bot**
-   ```bash
-   python -m accountingbot.bot
-   ```
-   The bot will perform long polling, create the SQLite database if it is missing, and write logs both to stdout and to the file defined by `LOG_FILE`.
-
-## Operational notes
-
-- **Database schema** – The bot automatically manages three tables: `people`, `transactions`, and `user_settings`. Positive transaction amounts represent debts; negative amounts represent repayments.
-- **Logging** – Rotate or truncate the file pointed to by `LOG_FILE` if it grows large. Each significant action (people, debts, payments, and cPanel calls) is recorded.
-- **Security** – Keep `.env` outside of version control, rotate your Telegram bot token periodically, and update dependencies with `pip install --upgrade -r requirements.txt`.
-
-## Optional tasks
-
-- **Optional: Inspect the database**
-  ```bash
-  sqlite3 "$DATABASE_PATH" ".tables"
-  sqlite3 "$DATABASE_PATH" "SELECT * FROM people LIMIT 5;"
-  ```
-
-- **Optional: Run the bot as a background process**
-  ```bash
-  nohup python -m accountingbot.bot > bot.log 2>&1 &
-  tail -f bot.log
-  ```
-
-- **Optional: Configure cPanel integration**
-  ```bash
-  export CPANEL_HOST=your-cpanel-host
-  export CPANEL_USERNAME=your-user
-  export CPANEL_API_TOKEN=your-api-token
-  export CPANEL_VERIFY_SSL=true
-  ```
-  With those values exported (or saved in `.env`), the helper located at `accountingbot/cpanel.py` can invoke UAPI endpoints for tasks such as remote backups.
-
-- **Optional: Update translations**
-  ```bash
-  nano accountingbot/localization.py
-  ```
-  Edit the dictionaries inside the file to adjust English or Persian responses. Restart the bot after saving your changes.
-
-## Development tips
-- Keep one terminal running the bot and another for editing files.
-- Use `/cancel` in Telegram to exit the current workflow at any time.
-- Commit changes with clear messages when modifying handlers or localization.
-
+---
+Need help later? Re-open **Setup Python App** to review or adjust the configuration. For Telegram-specific issues, ensure your server can reach api.telegram.org over HTTPS.

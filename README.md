@@ -1,77 +1,108 @@
 # AccountingBot
 
-AccountingBot is a multilingual Telegram bot for managing personal accounting workflows with cPanel-friendly deployment. It allows you to register people, track debts and payments, inspect transaction histories, and optionally interact with cPanel's UAPI for remote actions.
+AccountingBot is a multilingual Telegram bot that helps you track people, debts, and payments while remaining friendly to cPanel deployments. The bot stores data in SQLite, presents an organized keyboard-driven interface, and can optionally reach cPanel's UAPI for remote automation.
 
-## Features
+## Feature highlights
+- People registry with automatic numeric IDs and name/ID search.
+- Debt and repayment workflows that confirm actions before writing to the database.
+- Transaction history browser with optional date filtering.
+- English/Persian language toggle for the entire interface.
+- Inline and reply keyboards that keep the chat experience tidy.
+- SQLite storage with WAL mode so the bot remains lightweight and portable.
+- Structured logging to stdout and a log file for auditing purposes.
+- cPanel UAPI client (Optional) for running remote administrative actions.
 
-- **People management** – add people with automatically generated numeric IDs and search by name or ID.
-- **Debt tracking** – record new debts with optional descriptions and receive confirmations before saving.
-- **Payment tracking** – register repayments, automatically updating the running balance.
-- **History browser** – list transactions for a person with optional date-range filtering.
-- **Smart search** – search people globally or while inside a workflow using inline buttons.
-- **Language toggle** – switch the full interface between English and Persian at any time.
-- **Glassy UI** – organized reply keyboard for the main menu and inline buttons for confirmations and selections.
-- **SQLite storage** – lightweight, file-based database with WAL mode for concurrency.
-- **Logging & security** – structured logging to both file and stdout, parameterized SQL queries, and secrets pulled from environment variables.
-- **cPanel integration** – optional cPanel API client for invoking UAPI endpoints (e.g., remote backups) using secure tokens.
+## Step-by-step setup
 
-## Quick start
-
-1. **Install dependencies**
-
+1. **Install prerequisites**
    ```bash
-   python -m venv .venv
+   python3 --version
+   sudo apt-get update
+   sudo apt-get install -y python3 python3-venv python3-pip git
+   ```
+
+2. **Clone the repository**
+   ```bash
+   git clone https://github.com/your-org/AccountingBot.git
+   cd AccountingBot
+   ```
+
+3. **Create and activate a virtual environment**
+   ```bash
+   python3 -m venv .venv
    source .venv/bin/activate
+   ```
+
+4. **Install Python dependencies**
+   ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-2. **Configure environment variables** (create a `.env` file or export variables directly):
+5. **Configure environment variables**
+   ```bash
+   cat > .env <<'ENV'
+   BOT_TOKEN=replace-with-your-telegram-token
+   DATABASE_PATH=accounting.db
+   LOG_FILE=accounting_bot.log
+   CPANEL_HOST=
+   CPANEL_USERNAME=
+   CPANEL_API_TOKEN=
+   CPANEL_VERIFY_SSL=true
+   ENV
+   ```
+   - `BOT_TOKEN` is required and must match the token issued by BotFather.
+   - `DATABASE_PATH`, `LOG_FILE`, `CPANEL_HOST`, `CPANEL_USERNAME`, `CPANEL_API_TOKEN`, and `CPANEL_VERIFY_SSL` are optional overrides. Leave them blank or remove them if you do not need them.
 
-   | Variable | Description |
-   | --- | --- |
-   | `BOT_TOKEN` | Telegram bot token issued by BotFather (required). |
-   | `DATABASE_PATH` | Optional path to the SQLite database file (defaults to `accounting.db`). |
-   | `LOG_FILE` | Optional log file location (defaults to `accounting_bot.log`). |
-   | `CPANEL_HOST` | cPanel hostname (without protocol) if you need API access. |
-   | `CPANEL_USERNAME` | cPanel username for UAPI requests. |
-   | `CPANEL_API_TOKEN` | API token generated in cPanel for authentication. |
-   | `CPANEL_VERIFY_SSL` | Set to `false` to skip SSL verification (not recommended). |
+6. **Load configuration before running commands**
+   ```bash
+   export $(grep -v '^#' .env | xargs)
+   ```
+   Use the command above in every new shell session or rely on tooling such as `direnv` to load the `.env` file automatically.
 
-3. **Run the bot**
-
+7. **Run the bot**
    ```bash
    python -m accountingbot.bot
    ```
+   The bot will perform long polling, create the SQLite database if it is missing, and write logs both to stdout and to the file defined by `LOG_FILE`.
 
-The bot uses long polling by default. Deploying on cPanel typically involves creating a Python application, placing the project files in your cPanel account, and configuring the environment variables via the cPanel interface.
+## Operational notes
 
-## Database schema
+- **Database schema** – The bot automatically manages three tables: `people`, `transactions`, and `user_settings`. Positive transaction amounts represent debts; negative amounts represent repayments.
+- **Logging** – Rotate or truncate the file pointed to by `LOG_FILE` if it grows large. Each significant action (people, debts, payments, and cPanel calls) is recorded.
+- **Security** – Keep `.env` outside of version control, rotate your Telegram bot token periodically, and update dependencies with `pip install --upgrade -r requirements.txt`.
 
-The SQLite database automatically creates the following tables:
+## Optional tasks
 
-- `people(id INTEGER PRIMARY KEY, name TEXT UNIQUE, created_at TEXT)`
-- `transactions(id INTEGER PRIMARY KEY, person_id INTEGER, amount REAL, description TEXT, created_at TEXT)`
-- `user_settings(user_id INTEGER PRIMARY KEY, language TEXT, updated_at TEXT)`
+- **Optional: Inspect the database**
+  ```bash
+  sqlite3 "$DATABASE_PATH" ".tables"
+  sqlite3 "$DATABASE_PATH" "SELECT * FROM people LIMIT 5;"
+  ```
 
-Positive transaction amounts represent debts, whereas negative amounts represent payments.
+- **Optional: Run the bot as a background process**
+  ```bash
+  nohup python -m accountingbot.bot > bot.log 2>&1 &
+  tail -f bot.log
+  ```
 
-## cPanel integration
+- **Optional: Configure cPanel integration**
+  ```bash
+  export CPANEL_HOST=your-cpanel-host
+  export CPANEL_USERNAME=your-user
+  export CPANEL_API_TOKEN=your-api-token
+  export CPANEL_VERIFY_SSL=true
+  ```
+  With those values exported (or saved in `.env`), the helper located at `accountingbot/cpanel.py` can invoke UAPI endpoints for tasks such as remote backups.
 
-The optional `CPanelClient` wrapper (`accountingbot/cpanel.py`) enables calling cPanel's UAPI endpoints using environment-driven credentials. You can extend it to push database backups or trigger other administrative jobs once your credentials are configured.
-
-## Logging
-
-Logs are written both to `LOG_FILE` and to stdout. Important actions such as adding people, recording transactions, and cPanel interactions are captured for auditing. Rotate or archive the log file as needed for your deployment.
-
-## Security notes
-
-- Keep your Telegram bot token and cPanel credentials secret; rely on environment variables or cPanel's configuration UI instead of hardcoding them.
-- SQLite queries are parameterized to mitigate injection attacks.
-- Update dependencies regularly to receive security fixes.
+- **Optional: Update translations**
+  ```bash
+  nano accountingbot/localization.py
+  ```
+  Edit the dictionaries inside the file to adjust English or Persian responses. Restart the bot after saving your changes.
 
 ## Development tips
-
-- Run the bot in a separate terminal when actively developing handlers.
-- Use the reply keyboard to quickly navigate between workflows.
-- Press `/cancel` at any time to abort the current action and reset the temporary state.
+- Keep one terminal running the bot and another for editing files.
+- Use `/cancel` in Telegram to exit the current workflow at any time.
+- Commit changes with clear messages when modifying handlers or localization.
 

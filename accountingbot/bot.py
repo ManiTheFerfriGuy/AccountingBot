@@ -14,14 +14,21 @@ from telegram.ext import (AIORateLimiter, Application, ApplicationBuilder,
                           filters)
 
 from .config import load_config
-from .database import Database, Person
+from .database import (
+    DashboardSummary,
+    Database,
+    InvalidPersonNameError,
+    Person,
+    PersonAlreadyExistsError,
+    SearchResponse,
+)
 from .keyboards import confirmation_keyboard, language_keyboard, main_menu
 from .localization import get_text
 
 # Conversation states
 ADD_PERSON_NAME = 1
 SELECT_DEBT_PERSON, ENTER_DEBT_AMOUNT, ENTER_DEBT_DESCRIPTION, CONFIRM_DEBT = range(10, 14)
-SELECT_PAYMENT_PERSON, ENTER_PAYMENT_AMOUNT, CONFIRM_PAYMENT = range(20, 23)
+SELECT_PAYMENT_PERSON, ENTER_PAYMENT_AMOUNT, ENTER_PAYMENT_DESCRIPTION, CONFIRM_PAYMENT = range(20, 24)
 SELECT_HISTORY_PERSON, ENTER_HISTORY_DATES = range(30, 32)
 SEARCH_QUERY = 40
 
@@ -63,6 +70,81 @@ def build_person_keyboard(language: str, people: list[Person]) -> InlineKeyboard
     return InlineKeyboardMarkup(buttons)
 
 
+def format_balance_status(balance: float, language: str) -> str:
+    if balance > 0:
+        return get_text("balance_debtor", language).format(amount=balance)
+    if balance < 0:
+        return get_text("balance_creditor", language).format(amount=abs(balance))
+    return get_text("balance_settled", language)
+
+
+def format_search_results(language: str, response: SearchResponse) -> str:
+    lines = [get_text("search_results", language)]
+    for index, match in enumerate(response.matches[:5], start=1):
+        person = match.person
+        score_percent = int(round(min(max(match.score, 0.0), 1.0) * 100))
+        status = format_balance_status(match.balance, language)
+        lines.append(
+            get_text("search_result_item", language).format(
+                index=index,
+                name=person.name,
+                id=person.id,
+                status=status,
+                score=score_percent,
+            )
+        )
+    if response.suggestions:
+        suggestions = ", ".join(response.suggestions)
+        lines.append(
+            get_text("search_suggestions", language).format(suggestions=suggestions)
+        )
+    return "\n".join(lines)
+
+
+def format_dashboard(summary: DashboardSummary, language: str) -> str:
+    lines = [get_text("dashboard_summary", language)]
+    totals = summary.totals
+    lines.extend(
+        [
+            f"{get_text('total_debt', language)}: {totals.total_debt:.2f}",
+            f"{get_text('total_payments', language)}: {totals.total_payments:.2f}",
+            f"{get_text('outstanding_balance', language)}: {totals.outstanding_balance:.2f}",
+        ]
+    )
+
+    if summary.top_debtors:
+        lines.append(get_text("top_debtors", language))
+        for index, debtor in enumerate(summary.top_debtors, start=1):
+            person = debtor.person
+            lines.append(
+                f"{index}. {person.name} (#{person.id}) — {debtor.balance:.2f}"
+            )
+    else:
+        lines.append(get_text("no_debtors", language))
+
+    if summary.recent_transactions:
+        lines.append(get_text("recent_transactions", language))
+        for activity in summary.recent_transactions:
+            transaction = activity.transaction
+            template = (
+                "recent_transaction_debt"
+                if transaction.amount > 0
+                else "recent_transaction_payment"
+            )
+            lines.append(
+                get_text(template, language).format(
+                    name=activity.person_name,
+                    amount=abs(transaction.amount),
+                    date=transaction.created_at.strftime("%Y-%m-%d %H:%M"),
+                    description=transaction.description or "-",
+                )
+            )
+    else:
+        lines.append(get_text("no_transactions", language))
+
+    return "\n".join(lines)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     language = await get_language(context, user.id)
@@ -86,6 +168,21 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             get_text("start_message", language), reply_markup=keyboard
         )
+
+
+async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = await get_language(context, update.effective_user.id)
+    db: Database = context.bot_data["db"]
+    summary = await db.get_dashboard_summary()
+    text = format_dashboard(summary, language)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text(
+            text, reply_markup=main_menu(language)
+        )
+    else:
+        await update.message.reply_text(text, reply_markup=main_menu(language))
+    clear_workflow(context)
 
 
 def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -124,7 +221,16 @@ async def save_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     language = await get_language(context, update.effective_user.id)
     name = update.message.text.strip()
     db: Database = context.bot_data["db"]
-    person = await db.add_person(name)
+    try:
+        person = await db.add_person(name)
+    except InvalidPersonNameError:
+        await update.message.reply_text(get_text("invalid_person_name", language))
+        return ADD_PERSON_NAME
+    except PersonAlreadyExistsError:
+        await update.message.reply_text(
+            get_text("duplicate_person_name", language).format(name=name)
+        )
+        return ADD_PERSON_NAME
     await update.message.reply_text(
         get_text("person_added", language).format(name=person.name, id=person.id),
         reply_markup=main_menu(language),
@@ -194,8 +300,9 @@ async def handle_person_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db: Database = context.bot_data["db"]
     text = update.message.text.strip()
 
-    if text.isdigit():
-        person = await db.get_person(int(text))
+    stripped_text = text.lstrip("#")
+    if stripped_text.isdigit():
+        person = await db.get_person(int(stripped_text))
         if not person:
             await update.message.reply_text(get_text("not_found", language))
             return context.user_data.get("selection_state", ConversationHandler.END)
@@ -218,11 +325,17 @@ async def handle_person_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return ENTER_HISTORY_DATES
         return ConversationHandler.END
 
-    results = await db.search_people(text)
-    if not results:
-        await update.message.reply_text(get_text("not_found", language))
+    response = await db.search_people(text)
+    if not response.matches:
+        message = get_text("not_found", language)
+        if response.suggestions:
+            message = get_text("search_suggestions", language).format(
+                suggestions=", ".join(response.suggestions)
+            )
+        await update.message.reply_text(message)
         return context.user_data.get("selection_state", ConversationHandler.END)
-    keyboard = build_person_keyboard(language, results)
+    people = [match.person for match in response.matches[:20]]
+    keyboard = build_person_keyboard(language, people)
     await update.message.reply_text(
         get_text("search_results", language), reply_markup=keyboard
     )
@@ -233,25 +346,30 @@ async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     language = await get_language(context, update.effective_user.id)
     db: Database = context.bot_data["db"]
     text = update.message.text.strip()
-    results = await db.search_people(text)
+    response = await db.search_people(text)
     selection_mode = context.user_data.get("selection_mode")
-    if not results:
-        await update.message.reply_text(get_text("not_found", language))
+    if not response.matches:
+        message = get_text("not_found", language)
+        if response.suggestions:
+            message = get_text("search_suggestions", language).format(
+                suggestions=", ".join(response.suggestions)
+            )
+        await update.message.reply_text(message)
         if selection_mode:
             return context.user_data.get("selection_state", ConversationHandler.END)
+        await update.message.reply_text(get_text("search_filters_hint", language))
         return SEARCH_QUERY
     if selection_mode:
-        keyboard = build_person_keyboard(language, results)
+        people = [match.person for match in response.matches[:20]]
+        keyboard = build_person_keyboard(language, people)
         await update.message.reply_text(
             get_text("search_results", language), reply_markup=keyboard
         )
         return context.user_data.get("selection_state", ConversationHandler.END)
 
-    lines = [get_text("search_results", language)]
-    for person in results:
-        balance = await db.get_balance(person.id)
-        lines.append(f"#{person.id} — {person.name} ({balance:.2f})")
-    await update.message.reply_text("\n".join(lines))
+    formatted = format_search_results(language, response)
+    await update.message.reply_text(formatted, reply_markup=main_menu(language))
+    await update.message.reply_text(get_text("search_filters_hint", language))
     return SEARCH_QUERY
 
 
@@ -297,6 +415,9 @@ async def receive_debt_description(update: Update, context: ContextTypes.DEFAULT
 
 async def skip_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["description"] = ""
+    flow = context.user_data.get("flow")
+    if flow == "payment":
+        return await confirm_payment(update, context)
     return await confirm_debt(update, context)
 
 
@@ -304,7 +425,13 @@ async def confirm_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     language = await get_language(context, update.effective_user.id)
     person: Person = context.user_data["person"]
     amount = context.user_data["amount"]
-    text = get_text("confirm_debt", language).format(name=person.name, amount=amount)
+    description = context.user_data.get("description", "")
+    if description:
+        text = get_text("confirm_debt_with_description", language).format(
+            name=person.name, amount=amount, description=description
+        )
+    else:
+        text = get_text("confirm_debt", language).format(name=person.name, amount=amount)
     keyboard = confirmation_keyboard(language, "debt")
     await update.message.reply_text(text, reply_markup=keyboard)
     return CONFIRM_DEBT
@@ -389,9 +516,30 @@ async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(get_text("invalid_number", language))
         return ENTER_PAYMENT_AMOUNT
     context.user_data["amount"] = amount
-    keyboard = confirmation_keyboard(language, "payment")
+    context.user_data.pop("description", None)
+    await update.message.reply_text(get_text("enter_payment_description", language))
+    return ENTER_PAYMENT_DESCRIPTION
+
+
+async def receive_payment_description(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    context.user_data["description"] = update.message.text.strip()
+    return await confirm_payment(update, context)
+
+
+async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
     person: Person = context.user_data["person"]
-    text = get_text("confirm_payment", language).format(name=person.name, amount=amount)
+    amount = context.user_data["amount"]
+    description = context.user_data.get("description", "")
+    if description:
+        text = get_text("confirm_payment_with_description", language).format(
+            name=person.name, amount=amount, description=description
+        )
+    else:
+        text = get_text("confirm_payment", language).format(name=person.name, amount=amount)
+    keyboard = confirmation_keyboard(language, "payment")
     await update.message.reply_text(text, reply_markup=keyboard)
     return CONFIRM_PAYMENT
 
@@ -487,7 +635,10 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
     context.user_data["selection_mode"] = False
-    await update.message.reply_text(get_text("search_prompt", language))
+    prompt = "\n".join(
+        [get_text("search_prompt", language), get_text("search_filters_hint", language)]
+    )
+    await update.message.reply_text(prompt)
     return SEARCH_QUERY
 
 
@@ -534,6 +685,10 @@ def register_handlers(application: Application) -> None:
     # Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", show_main_menu))
+    application.add_handler(CommandHandler("dashboard", show_dashboard))
+    application.add_handler(
+        MessageHandler(filters.Regex(r"^(Dashboard|داشبورد)$"), show_dashboard)
+    )
 
     # Add person conversation
     add_person_conv = ConversationHandler(
@@ -593,6 +748,12 @@ def register_handlers(application: Application) -> None:
             ENTER_PAYMENT_AMOUNT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_amount),
             ],
+            ENTER_PAYMENT_DESCRIPTION: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, receive_payment_description
+                ),
+                CommandHandler("skip", skip_description),
+            ],
             CONFIRM_PAYMENT: [
                 CallbackQueryHandler(finalize_payment, pattern=r"^confirm:payment$"),
                 CallbackQueryHandler(handle_back, pattern=r"^back$"),
@@ -635,6 +796,7 @@ def register_handlers(application: Application) -> None:
         ConversationHandler(
             entry_points=[
                 MessageHandler(filters.Regex(r"^(Search|جستجو)$"), start_search),
+                CommandHandler("search", start_search),
             ],
             states={
                 SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_people)],
@@ -649,6 +811,7 @@ def register_handlers(application: Application) -> None:
         ConversationHandler(
             entry_points=[
                 MessageHandler(filters.Regex(r"^(Language|زبان)$"), start_language),
+                CommandHandler("language", start_language),
             ],
             states={
                 SEARCH_QUERY: [CallbackQueryHandler(change_language, pattern=r"^lang:")],

@@ -1,8 +1,6 @@
 """Keyboard helpers for AccountingBot."""
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from .localization import get_text
@@ -19,30 +17,27 @@ def main_menu(language: str) -> ReplyKeyboardMarkup:
                 get_text("pay_debt", language),
                 get_text("history", language),
             ],
-            [
-                get_text("search", language),
-                get_text("dashboard", language),
-            ],
+            [get_text("dashboard", language)],
             [get_text("language", language)],
         ],
         resize_keyboard=True,
     )
 
 
-def person_keyboard(language: str, people: Iterable[Tuple[int, str]]) -> InlineKeyboardMarkup:
-    buttons: List[List[InlineKeyboardButton]] = []
-    row: List[InlineKeyboardButton] = []
-    for person_id, name in people:
-        label = f"{name} (#{person_id})"
-        row.append(InlineKeyboardButton(label, callback_data=f"person:{person_id}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton(get_text("search", language), callback_data="search")])
-    buttons.append([InlineKeyboardButton(get_text("cancel", language), callback_data="cancel")])
-    return InlineKeyboardMarkup(buttons)
+def selection_method_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("select_using_id", language), callback_data="method:id"
+                ),
+                InlineKeyboardButton(
+                    get_text("select_using_menu", language), callback_data="method:menu"
+                ),
+            ],
+            [InlineKeyboardButton(get_text("cancel", language), callback_data="cancel")],
+        ]
+    )
 
 
 def confirmation_keyboard(language: str, action: str) -> InlineKeyboardMarkup:

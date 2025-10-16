@@ -51,7 +51,8 @@ ENV
 2. In **Startup file**, enter `start.py`.
 3. Create `start.py` in the Application Root with the following content:
    ```python
-   import os
+   import subprocess
+   import sys
    from pathlib import Path
 
    from dotenv import load_dotenv
@@ -60,12 +61,18 @@ ENV
    load_dotenv(BASE_DIR / ".env")
 
    if __name__ == "__main__":
-       os.system("python -m accountingbot.bot")
+       subprocess.run([sys.executable, "-m", "accountingbot.bot"], check=True)
    ```
-4. Set **Application startup command** to `python start.py`.
+4. Set **Application startup command** to the Python interpreter path that cPanel shows for your virtual environment, for
+   example:
+   ```
+   /home/username/virtualenv/accountingbot/3.10/bin/python start.py
+   ```
+   Replace `/home/username/virtualenv/accountingbot/3.10/bin/python` with the value listed in the **Virtual environment** field
+   of the **Application Root** card so the same interpreter Passenger uses is reused here.
 5. Click **Save** and then **Restart** to make cPanel run the bot.
 
-cPanel will now execute `python start.py` through Passenger whenever it detects the application needs to restart (for example, after saving changes or clicking **Restart**).
+cPanel will now execute the command you provided (for example, `/home/username/virtualenv/accountingbot/3.10/bin/python start.py`) through Passenger whenever it detects the application needs to restart (for example, after saving changes or clicking **Restart**).
 
 ## 6. Manage the running bot
 - **Restarting:** Use the **Restart** button in **Setup Python App** after editing files or updating dependencies.

@@ -22,7 +22,12 @@ from .database import (
     PersonAlreadyExistsError,
     SearchResponse,
 )
-from .keyboards import confirmation_keyboard, language_keyboard, main_menu
+from .keyboards import (
+    confirmation_keyboard,
+    language_keyboard,
+    main_menu,
+    selection_method_keyboard,
+)
 from .localization import get_text
 
 # Conversation states
@@ -45,11 +50,19 @@ async def get_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
     return language
 
 
-def build_person_keyboard(language: str, people: list[Person]) -> InlineKeyboardMarkup:
+def build_people_menu_keyboard(
+    language: str,
+    people: list[Person],
+    *,
+    page: int,
+    has_prev: bool,
+    has_next: bool,
+    query: str | None,
+) -> InlineKeyboardMarkup:
     from telegram import InlineKeyboardButton
 
-    buttons = []
-    row = []
+    buttons: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
     for person in people:
         row.append(
             InlineKeyboardButton(
@@ -61,9 +74,37 @@ def build_person_keyboard(language: str, people: list[Person]) -> InlineKeyboard
             row = []
     if row:
         buttons.append(row)
+
+    nav_row: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav_row.append(
+            InlineKeyboardButton(
+                get_text("previous_page", language), callback_data=f"menu:page:{page - 1}"
+            )
+        )
+    if has_next:
+        nav_row.append(
+            InlineKeyboardButton(
+                get_text("next_page", language), callback_data=f"menu:page:{page + 1}"
+            )
+        )
+    if nav_row:
+        buttons.append(nav_row)
+
+    search_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(get_text("search", language), callback_data="menu:search")
+    ]
+    if query:
+        search_row.append(
+            InlineKeyboardButton(
+                get_text("clear_search", language), callback_data="menu:clear"
+            )
+        )
+    buttons.append(search_row)
+
     buttons.append(
         [
-            InlineKeyboardButton(get_text("search", language), callback_data="search"),
+            InlineKeyboardButton(get_text("back", language), callback_data="menu:back"),
             InlineKeyboardButton(get_text("cancel", language), callback_data="cancel"),
         ]
     )
@@ -195,8 +236,104 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "amount",
         "description",
         "flow",
+        "selection_method",
+        "menu_query",
+        "menu_page",
+        "awaiting_menu_search",
     ):
         context.user_data.pop(key, None)
+
+
+async def show_selection_method(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    keyboard = selection_method_keyboard(language)
+    text = get_text("choose_selection_method", language)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard)
+    return context.user_data.get("selection_state", ConversationHandler.END)
+
+
+async def show_people_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    page: int = 0,
+    query: str | None = None,
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    db: Database = context.bot_data["db"]
+    page_size = 8
+    if query is None:
+        stored_query = context.user_data.get("menu_query", "")
+        query = stored_query if stored_query else None
+    else:
+        context.user_data["menu_query"] = query
+    context.user_data["menu_page"] = page
+    context.user_data["selection_method"] = "menu"
+    context.user_data["selection_mode"] = True
+    context.user_data["awaiting_menu_search"] = False
+
+    people: list[Person]
+    has_next = False
+    has_prev = page > 0
+    header_text: str
+
+    if query:
+        response = await db.search_people(query)
+        matches = [match.person for match in response.matches]
+        total_matches = len(matches)
+        start_index = page * page_size
+        people = matches[start_index : start_index + page_size]
+        has_next = start_index + page_size < total_matches
+        has_prev = page > 0 and start_index > 0
+        if people:
+            header_text = get_text("menu_search_results", language).format(
+                query=query, count=total_matches, page=page + 1
+            )
+        else:
+            header_text = get_text("menu_search_no_results", language).format(
+                query=query
+            )
+    else:
+        offset = page * page_size
+        results = await db.list_people(limit=page_size + 1, offset=offset)
+        has_next = len(results) > page_size
+        people = results[:page_size]
+        if not people and page > 0:
+            # If the requested page no longer has items, show the previous page.
+            return await show_people_menu(update, context, page=page - 1, query=None)
+        if people:
+            header_text = get_text("menu_prompt", language).format(page=page + 1)
+        else:
+            # No people in the database at all.
+            message = get_text("no_people", language)
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    message, reply_markup=main_menu(language)
+                )
+            else:
+                await update.message.reply_text(message, reply_markup=main_menu(language))
+            clear_workflow(context)
+            return ConversationHandler.END
+
+    keyboard = build_people_menu_keyboard(
+        language,
+        people,
+        page=page,
+        has_prev=has_prev,
+        has_next=has_next,
+        query=query,
+    )
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(header_text, reply_markup=keyboard)
+    else:
+        await update.message.reply_text(header_text, reply_markup=keyboard)
+    return context.user_data.get("selection_state", ConversationHandler.END)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -245,10 +382,10 @@ async def list_people_keyboard(
     selection_state: int,
     after_state: int,
 ) -> Optional[int]:
-    language = await get_language(context, update.effective_user.id)
     db: Database = context.bot_data["db"]
-    people = await db.list_people(limit=20)
-    if not people:
+    language = await get_language(context, update.effective_user.id)
+    has_people = await db.list_people(limit=1)
+    if not has_people:
         message = get_text("no_people", language)
         if update.callback_query:
             await update.callback_query.answer()
@@ -257,18 +394,19 @@ async def list_people_keyboard(
             )
         else:
             await update.message.reply_text(message, reply_markup=main_menu(language))
+        clear_workflow(context)
         return ConversationHandler.END
-    keyboard = build_person_keyboard(language, people)
-    text = get_text("enter_person_prompt", language)
-    if update.message:
-        await update.message.reply_text(text, reply_markup=keyboard)
-    elif update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.edit_text(text, reply_markup=keyboard)
-    context.user_data["selection_mode"] = True
+
+    context.user_data["selection_mode"] = False
     context.user_data["selection_state"] = selection_state
     context.user_data["after_state"] = after_state
-    return selection_state
+    context.user_data["selection_method"] = None
+    context.user_data["menu_query"] = ""
+    context.user_data["menu_page"] = 0
+    context.user_data["awaiting_menu_search"] = False
+    if update.callback_query:
+        await update.callback_query.answer()
+    return await show_selection_method(update, context)
 
 
 async def select_person_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -278,13 +416,40 @@ async def select_person_callback(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     if data == "cancel":
         return await cancel(update, context)
-    if data == "search":
-        await query.edit_message_text(get_text("search_prompt", language))
-        return SEARCH_QUERY
+    if data == "method:id":
+        context.user_data["selection_method"] = "id"
+        context.user_data["selection_mode"] = False
+        context.user_data["awaiting_menu_search"] = False
+        await query.edit_message_text(get_text("prompt_person_id", language))
+        return context.user_data.get("selection_state", ConversationHandler.END)
+    if data == "method:menu":
+        context.user_data["menu_query"] = ""
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=None)
+    if data.startswith("menu:page:"):
+        try:
+            page = int(data.split(":", 2)[2])
+        except (ValueError, IndexError):
+            page = context.user_data.get("menu_page", 0)
+        return await show_people_menu(update, context, page=max(page, 0), query=None)
+    if data == "menu:search":
+        context.user_data["awaiting_menu_search"] = True
+        await query.edit_message_text(get_text("menu_search_prompt", language))
+        return context.user_data.get("selection_state", ConversationHandler.END)
+    if data == "menu:clear":
+        context.user_data["menu_query"] = ""
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=None)
+    if data == "menu:back":
+        context.user_data["selection_method"] = None
+        context.user_data["selection_mode"] = False
+        context.user_data["awaiting_menu_search"] = False
+        return await show_selection_method(update, context)
     if data.startswith("person:"):
         person_id = int(data.split(":", 1)[1])
         context.user_data["selected_person"] = person_id
         context.user_data["selection_mode"] = False
+        context.user_data["selection_method"] = None
         after_state = context.user_data.get("after_state")
         if after_state == ENTER_DEBT_AMOUNT:
             return await prompt_debt_amount(update, context)
@@ -292,23 +457,32 @@ async def select_person_callback(update: Update, context: ContextTypes.DEFAULT_T
             return await prompt_payment_amount(update, context)
         if after_state == ENTER_HISTORY_DATES:
             return await prompt_history_dates(update, context)
-    return ConversationHandler.END
+    return context.user_data.get("selection_state", ConversationHandler.END)
 
 
 async def handle_person_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
     db: Database = context.bot_data["db"]
     text = update.message.text.strip()
+    selection_state = context.user_data.get("selection_state", ConversationHandler.END)
+
+    if context.user_data.get("awaiting_menu_search"):
+        context.user_data["menu_query"] = text
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=text)
 
     stripped_text = text.lstrip("#")
+    method = context.user_data.get("selection_method")
+
     if stripped_text.isdigit():
         person = await db.get_person(int(stripped_text))
         if not person:
             await update.message.reply_text(get_text("not_found", language))
-            return context.user_data.get("selection_state", ConversationHandler.END)
+            return selection_state
         context.user_data["selected_person"] = person.id
         context.user_data["person"] = person
         context.user_data["selection_mode"] = False
+        context.user_data["selection_method"] = None
         after_state = context.user_data.get("after_state")
         if after_state == ENTER_DEBT_AMOUNT:
             await update.message.reply_text(
@@ -325,21 +499,17 @@ async def handle_person_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return ENTER_HISTORY_DATES
         return ConversationHandler.END
 
-    response = await db.search_people(text)
-    if not response.matches:
-        message = get_text("not_found", language)
-        if response.suggestions:
-            message = get_text("search_suggestions", language).format(
-                suggestions=", ".join(response.suggestions)
-            )
-        await update.message.reply_text(message)
-        return context.user_data.get("selection_state", ConversationHandler.END)
-    people = [match.person for match in response.matches[:20]]
-    keyboard = build_person_keyboard(language, people)
-    await update.message.reply_text(
-        get_text("search_results", language), reply_markup=keyboard
-    )
-    return context.user_data.get("selection_state", ConversationHandler.END)
+    if method == "id":
+        await update.message.reply_text(get_text("prompt_person_id", language))
+        return selection_state
+
+    if method == "menu" or context.user_data.get("selection_mode"):
+        context.user_data["menu_query"] = text
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=text)
+
+    await update.message.reply_text(get_text("choose_selection_method", language))
+    return selection_state
 
 
 async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -360,12 +530,9 @@ async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(get_text("search_filters_hint", language))
         return SEARCH_QUERY
     if selection_mode:
-        people = [match.person for match in response.matches[:20]]
-        keyboard = build_person_keyboard(language, people)
-        await update.message.reply_text(
-            get_text("search_results", language), reply_markup=keyboard
-        )
-        return context.user_data.get("selection_state", ConversationHandler.END)
+        context.user_data["menu_query"] = text
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=text)
 
     formatted = format_search_results(language, response)
     await update.message.reply_text(formatted, reply_markup=main_menu(language))
@@ -725,10 +892,6 @@ def register_handlers(application: Application) -> None:
                 CallbackQueryHandler(finalize_debt, pattern=r"^confirm:debt$"),
                 CallbackQueryHandler(handle_back, pattern=r"^back$"),
             ],
-            SEARCH_QUERY: [
-                CallbackQueryHandler(select_person_callback),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
-            ],
         },
         fallbacks=[CommandHandler("cancel", cancel), CallbackQueryHandler(cancel, pattern="cancel")],
         name="add_debt",
@@ -758,10 +921,6 @@ def register_handlers(application: Application) -> None:
                 CallbackQueryHandler(finalize_payment, pattern=r"^confirm:payment$"),
                 CallbackQueryHandler(handle_back, pattern=r"^back$"),
             ],
-            SEARCH_QUERY: [
-                CallbackQueryHandler(select_person_callback),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
-            ],
         },
         fallbacks=[CommandHandler("cancel", cancel), CallbackQueryHandler(cancel, pattern="cancel")],
         name="payment",
@@ -780,10 +939,6 @@ def register_handlers(application: Application) -> None:
             ],
             ENTER_HISTORY_DATES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
-            ],
-            SEARCH_QUERY: [
-                CallbackQueryHandler(select_person_callback),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel), CallbackQueryHandler(cancel, pattern="cancel")],

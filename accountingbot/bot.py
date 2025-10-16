@@ -466,6 +466,19 @@ async def handle_person_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text.strip()
     selection_state = context.user_data.get("selection_state", ConversationHandler.END)
 
+    normalized_text = text.casefold()
+    if normalized_text == get_text("select_using_menu", language).casefold():
+        context.user_data["menu_query"] = ""
+        context.user_data["menu_page"] = 0
+        return await show_people_menu(update, context, page=0, query=None)
+
+    if normalized_text == get_text("select_using_id", language).casefold():
+        context.user_data["selection_method"] = "id"
+        context.user_data["selection_mode"] = False
+        context.user_data["awaiting_menu_search"] = False
+        await update.message.reply_text(get_text("prompt_person_id", language))
+        return selection_state
+
     if context.user_data.get("awaiting_menu_search"):
         context.user_data["menu_query"] = text
         context.user_data["menu_page"] = 0

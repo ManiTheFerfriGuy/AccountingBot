@@ -120,34 +120,26 @@ ZIP alternative:
 
 ---
 
-## 5. Create the settings file (`.env`)
+## 5. Add your secrets as cPanel environment variables
 
-1. You are still in the Terminal with the virtual environment active.
-2. Type the following block exactly as written, then press **Enter** after the final `ENV` line. Replace the placeholder values with your information.
+Instead of creating a `.env` file, you will store the bot settings inside the **Setup Python App** page. cPanel passes these values to your program every time it starts.
 
-   ```bash
-   cat > .env <<'ENV'
-   BOT_TOKEN=PASTE-YOUR-TELEGRAM-TOKEN-HERE
-   DATABASE_PATH=accounting.db
-   LOG_FILE=accounting_bot.log
-   CPANEL_HOST=
-   CPANEL_USERNAME=
-   CPANEL_API_TOKEN=
-   CPANEL_VERIFY_SSL=true
-   ENV
-   ```
+1. Go back to the browser tab that shows the **Setup Python App** page for your application. Click **Edit** if the page is not already in edit mode.
+2. Scroll to the **Environment variables** section and click **Add Variable** for each item below. Type the name exactly as shown in the left column and put your value on the right:
 
-3. Check that the file was created by running `cat .env`. If you make a mistake, run the block again.
+   | Name | Value to enter |
+   | ---- | -------------- |
+   | `BOT_TOKEN` | Paste your Telegram bot token. This value is required or the bot will not start. |
+   | `DATABASE_PATH` | `accounting.db` (or another filename if you want the database stored elsewhere). |
+   | `LOG_FILE` | `accounting_bot.log` unless you prefer a different log filename. |
+   | `CPANEL_HOST` | *(Optional)* Only needed if you will use the advanced helpers in `accountingbot/cpanel.py`. |
+   | `CPANEL_USERNAME` | *(Optional)* Only needed with the helpers above. |
+   | `CPANEL_API_TOKEN` | *(Optional)* Only needed with the helpers above. |
+   | `CPANEL_VERIFY_SSL` | `true` (set to `false` only if your host’s support team tells you to). |
 
-What the options mean:
+3. Click **Save** in the Environment variables box (some themes save automatically when you leave the field). Your values are now stored securely by cPanel.
 
-* `BOT_TOKEN` – required. Without it the bot cannot talk to Telegram.
-* `DATABASE_PATH` – the file where AccountingBot stores information. You can keep the default.
-* `LOG_FILE` – where the bot writes messages about what it is doing. Keep the default unless you have a reason to change it.
-* `CPANEL_HOST`, `CPANEL_USERNAME`, `CPANEL_API_TOKEN` – optional. Leave them empty unless you plan to use the advanced automation helpers provided in `accountingbot/cpanel.py`.
-* `CPANEL_VERIFY_SSL` – keep `true` unless your host tells you to set it to `false`.
-
-Security tip: Never upload `.env` to public places. It holds secrets.
+Tip: You can return to this section later to update any variable. There is no need to upload or edit files through the Terminal.
 
 ---
 
@@ -173,6 +165,8 @@ Security tip: Never upload `.env` to public places. It holds secrets.
 
 2. Confirm the file exists by typing `cat start.py`.
 
+The script loads any environment variables provided by cPanel. If you ever decide to use a local `.env` file while testing on your own computer, the script will read that too.
+
 ---
 
 ## 7. Tell cPanel how to start the bot
@@ -192,7 +186,7 @@ Security tip: Never upload `.env` to public places. It holds secrets.
      environment, so leaving it empty is fine. Replace `kingserv` with your own username if necessary.
 
 4. Click **Save**.
-5. After saving, click **Restart** (or **Restart App** if that is what your version shows). cPanel will now run the bot. Whenever you change the code or the `.env` file, click **Restart** again.
+5. After saving, click **Restart** (or **Restart App** if that is what your version shows). cPanel will now run the bot. Whenever you change the code or update an environment variable, click **Restart** again.
 
 ---
 
@@ -215,7 +209,7 @@ Security tip: Never upload `.env` to public places. It holds secrets.
 * **Restart after updates** – whenever you change files or install packages, click **Restart** inside **Setup Python App**.
 * **Update the code** – in the Terminal (with the virtual environment active), run `git pull`. Then run `pip install -r requirements.txt` again in case new packages were added. Finally, restart the app.
 * **Back up your data** – the bot stores its database in the file named in `DATABASE_PATH` (default `accounting.db`). Download it from **File Manager** or via SFTP to keep a backup.
-* **Keep secrets safe** – never share the `.env` file or the Telegram bot token.
+* **Keep secrets safe** – never share your Telegram bot token or expose the values you entered in the Environment variables section.
 
 ---
 
@@ -226,7 +220,7 @@ Security tip: Never upload `.env` to public places. It holds secrets.
 | The Terminal command says “No such file or directory” | Check for typos, especially in your username. Run `pwd` to see which folder you are in. |
 | `source .../activate` fails | Make sure you copied the **exact** path from the Setup Python App screen. |
 | `pip` errors about the internet | Wait a minute and run the command again. If it still fails, contact your host—they might block outgoing connections. |
-| Bot does not answer in Telegram | Re-open **Setup Python App**, click **View Logs**, and look for error messages. Double-check the `BOT_TOKEN` in `.env`. |
+| Bot does not answer in Telegram | Re-open **Setup Python App**, click **View Logs**, and look for error messages. Double-check the `BOT_TOKEN` value in the Environment variables list. |
 | You closed the Terminal window | Open it again and repeat the `source .../activate` step before running any Python commands. |
 
 If a problem is not listed, copy the exact error message and share it with someone who can help (for example, your hosting support or the AccountingBot maintainers). Exact words matter—avoid summarizing.

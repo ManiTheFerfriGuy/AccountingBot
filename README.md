@@ -65,12 +65,12 @@ Tips:
 
 We will copy the bot from GitHub directly into the folder cPanel created.
 
-1. In the Terminal, type the following commands one line at a time. Press **Enter** after each line. Replace `YOURUSERNAME` with your actual cPanel username.
+1. In the Terminal, type the following commands one line at a time. Press **Enter** after each line.
 
    ```bash
    cd ~/accountingbot
    rm -rf -- * .* 2>/dev/null || true
-   git clone https://github.com/your-org/AccountingBot.git .
+   git clone https://github.com/ManiTheFerfriGuy/AccountingBot.git .
    ```
 
    Explanation:
@@ -78,6 +78,8 @@ We will copy the bot from GitHub directly into the folder cPanel created.
    * `cd ~/accountingbot` moves you into the Application root folder.
    * `rm -rf -- * .* ...` cleans the folder. If the folder is already empty, the command silently does nothing.
    * `git clone ... .` downloads the project files from GitHub.
+
+   If you are using a different fork or GitHub username, replace `ManiTheFerfriGuy` with the owner of your repository.
 
 2. When the command finishes, type `ls` and press **Enter**. You should see files named `README.md`, `requirements.txt`, and a folder named `accountingbot`. If you see an error about “git: command not found”, contact your host—they must install Git or you will need to upload the files as a ZIP through the File Manager instead.
 
@@ -92,13 +94,18 @@ ZIP alternative:
 
 1. Keep the Terminal open.
 2. Copy the **Virtual environment** path from the cPanel tab you left open earlier. It ends with `/bin/activate`.
-3. In the Terminal, type the following line, but replace the path with your real one:
+3. In the Terminal, type the activation command shown in cPanel. For example, if cPanel shows the path
+   `/home/kingserv/virtualenv/accountingbot/3.10/bin/activate`, you would run:
 
    ```bash
-   source /home/YOURUSERNAME/virtualenv/accountingbot/3.10/bin/activate
+   source /home/kingserv/virtualenv/accountingbot/3.10/bin/activate
    ```
 
-   After pressing **Enter**, the prompt changes and shows something like `(accountingbot:3.10)` at the beginning. This means the environment is active.
+   After pressing **Enter**, the prompt changes and shows something like `(accountingbot:3.10)` at the beginning. This means the environment is active. If your username is different, replace `kingserv` with your own value. Many people like to chain the activation and directory change together, for example:
+
+   ```bash
+   source /home/kingserv/virtualenv/accountingbot/3.10/bin/activate && cd /home/kingserv/accountingbot
+   ```
 
 4. Install the Python packages by running:
 
@@ -174,14 +181,18 @@ Security tip: Never upload `.env` to public places. It holds secrets.
 2. Click the **Edit** button on your application.
 3. Fill in the fields:
    * **Startup file** – type `start.py`.
-   * **Application startup command** – type the same Python path you used earlier, followed by a space and `start.py`. Example:
+   * **Application startup command** – on some cPanel versions this field is hidden or labelled **Passenger start command**.
+     If you see it, enter the same Python path you used earlier, followed by a space and `start.py`. Example:
 
      ```
-     /home/YOURUSERNAME/virtualenv/accountingbot/3.10/bin/python start.py
+     /home/kingserv/virtualenv/accountingbot/3.10/bin/python start.py
      ```
+
+     If your page does not have this field, cPanel automatically runs the app with the Python interpreter from your virtual
+     environment, so leaving it empty is fine. Replace `kingserv` with your own username if necessary.
 
 4. Click **Save**.
-5. After saving, click **Restart**. cPanel will now run the bot. Whenever you change the code or the `.env` file, click **Restart** again.
+5. After saving, click **Restart** (or **Restart App** if that is what your version shows). cPanel will now run the bot. Whenever you change the code or the `.env` file, click **Restart** again.
 
 ---
 

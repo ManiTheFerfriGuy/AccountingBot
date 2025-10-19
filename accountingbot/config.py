@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
-from dotenv import load_dotenv
+from .secrets import load_secrets
 
-load_dotenv()
+load_secrets()
 
 
 @dataclass(slots=True)

@@ -141,6 +141,20 @@ AccountingBot needs a few secrets such as the Telegram bot token. Store them dir
 
 3. Click **Save** in the Environment variables box (some themes save automatically when you leave the field). Your values are now stored securely by cPanel.
 
+### Optional: add a `secrets.json` file for local testing
+
+If you want to run the bot on your own computer (or keep a backup of the values), create a file named `secrets.json` in the same folder as `start.py`. Put your values inside a JSON object, for example:
+
+```json
+{
+  "BOT_TOKEN": "123456:ABC-DEF",
+  "DATABASE_PATH": "accounting.db",
+  "LOG_FILE": "accounting_bot.log"
+}
+```
+
+Upload this file through **File Manager** when you are ready. The application reads from `secrets.json` only when an environment variable is missing, so the values you store in cPanel still take precedence.
+
 ---
 
 ## 6. Create the startup script that runs the bot
@@ -153,10 +167,10 @@ AccountingBot needs a few secrets such as the Telegram bot token. Store them dir
    import sys
    from pathlib import Path
 
-   from dotenv import load_dotenv
+   from accountingbot.secrets import load_secrets
 
    BASE_DIR = Path(__file__).resolve().parent
-   load_dotenv(BASE_DIR / ".env")
+   load_secrets(BASE_DIR / "secrets.json")
 
    if __name__ == "__main__":
        subprocess.run([sys.executable, "-m", "accountingbot.bot"], check=True)
@@ -165,7 +179,7 @@ AccountingBot needs a few secrets such as the Telegram bot token. Store them dir
 
 2. Confirm the file exists by typing `cat start.py`.
 
-The script looks for a `.env` file (if you add one later) and then reads the environment variables stored in cPanel, so it adapts to either setup automatically.
+The script looks for a `secrets.json` file (if you add one later) and then reads the environment variables stored in cPanel, so it adapts to either setup automatically.
 
 ---
 
@@ -236,7 +250,7 @@ Tips:
 * **Restart after updates** – attach to the `tmux` session, stop the bot with `Ctrl + C`, run any updates, then start it again with `python -m accountingbot.bot`.
 * **Update the code** – in the Terminal (with the virtual environment active), run `git pull`. Then run `pip install -r requirements.txt` again in case new packages were added. Start the bot again afterwards.
 * **Back up your data** – the bot stores its database in the file named in `DATABASE_PATH` (default `accounting.db`). Download it from **File Manager** or via SFTP to keep a backup.
-* **Keep secrets safe** – never share your Telegram bot token or expose the values you entered in the Environment variables section or `.env` file.
+* **Keep secrets safe** – never share your Telegram bot token or expose the values you entered in the Environment variables section or `secrets.json` file.
 
 ---
 

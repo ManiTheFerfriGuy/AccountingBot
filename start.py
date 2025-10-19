@@ -2,10 +2,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from accountingbot.secrets import load_secrets
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+load_secrets(BASE_DIR / "secrets.json")
 
 if __name__ == "__main__":
     subprocess.run([sys.executable, "-m", "accountingbot.bot"], check=True)

@@ -7,6 +7,8 @@ from datetime import datetime
 from html import escape
 from typing import Optional
 
+import re
+
 from telegram import InlineKeyboardMarkup, Update, constants
 from telegram.ext import (AIORateLimiter, Application, ApplicationBuilder,
                           CallbackQueryHandler, CommandHandler,
@@ -28,7 +30,7 @@ from .keyboards import (
     main_menu,
     selection_method_keyboard,
 )
-from .localization import get_text
+from .localization import available_languages, get_text
 
 # Conversation states
 ADD_PERSON_NAME = 1
@@ -38,6 +40,20 @@ SELECT_HISTORY_PERSON, ENTER_HISTORY_DATES = range(30, 32)
 SEARCH_QUERY = 40
 
 LOGGER = logging.getLogger(__name__)
+
+
+def menu_option_filter(key: str):
+    """Return a filter matching the localized menu option for ``key``."""
+
+    patterns: set[str] = set()
+    for language in available_languages().keys():
+        label = get_text(key, language)
+        patterns.add(re.escape(label))
+    # Provide a final fallback so commands like English defaults without
+    # translations still work even if ``available_languages`` is updated.
+    patterns.add(re.escape(key))
+    joined = "|".join(sorted(patterns, key=len, reverse=True))
+    return filters.Regex(rf"^({joined})$")
 
 
 async def get_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
@@ -866,14 +882,12 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", show_main_menu))
     application.add_handler(CommandHandler("dashboard", show_dashboard))
-    application.add_handler(
-        MessageHandler(filters.Regex(r"^(Dashboard|داشبورد)$"), show_dashboard)
-    )
+    application.add_handler(MessageHandler(menu_option_filter("dashboard"), show_dashboard))
 
     # Add person conversation
     add_person_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^(Add Person|افزودن شخص)$"), prompt_person_name)
+            MessageHandler(menu_option_filter("add_person"), prompt_person_name)
         ],
         states={
             ADD_PERSON_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name)],
@@ -887,7 +901,7 @@ def register_handlers(application: Application) -> None:
     # Add debt conversation
     add_debt_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^(Add Debt|ثبت بدهی)$"), start_add_debt),
+            MessageHandler(menu_option_filter("add_debt"), start_add_debt),
         ],
         states={
             SELECT_DEBT_PERSON: [
@@ -914,7 +928,7 @@ def register_handlers(application: Application) -> None:
     # Payment conversation
     payment_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^(Pay Debt|پرداخت بدهی)$"), start_payment),
+            MessageHandler(menu_option_filter("pay_debt"), start_payment),
         ],
         states={
             SELECT_PAYMENT_PERSON: [
@@ -943,7 +957,7 @@ def register_handlers(application: Application) -> None:
     # History conversation
     history_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^(History|تاریخچه)$"), start_history),
+            MessageHandler(menu_option_filter("history"), start_history),
         ],
         states={
             SELECT_HISTORY_PERSON: [
@@ -963,7 +977,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(
         ConversationHandler(
             entry_points=[
-                MessageHandler(filters.Regex(r"^(Search|جستجو)$"), start_search),
+                MessageHandler(menu_option_filter("search"), start_search),
                 CommandHandler("search", start_search),
             ],
             states={
@@ -978,7 +992,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(
         ConversationHandler(
             entry_points=[
-                MessageHandler(filters.Regex(r"^(Language|زبان)$"), start_language),
+                MessageHandler(menu_option_filter("language"), start_language),
                 CommandHandler("language", start_language),
             ],
             states={

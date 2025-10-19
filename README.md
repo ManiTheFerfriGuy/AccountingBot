@@ -204,7 +204,17 @@ Running the bot in `tmux` keeps it alive even after you close the browser or SSH
 
    If you see “command not found”, ask your hosting provider to enable `tmux` or install it for you. Most cPanel hosts provide it by default.
 
-3. Inside the new `tmux` window, run the bot:
+3. Before starting the bot, make sure the environment variables are available in this shell. If you only configured them in cPanel (Option A), export them now (replace the values with your own):
+
+   ```bash
+   export BOT_TOKEN="paste-your-token-here"
+   export DATABASE_PATH="accounting.db"
+   export LOG_FILE="accounting_bot.log"
+   ```
+
+   You can export only the variables you set in cPanel. If you prefer, you may instead create the `.env` file from Option B; it will be picked up automatically when the bot starts.
+
+4. Inside the new `tmux` window, run the bot:
 
    ```bash
    python -m accountingbot.bot
@@ -212,14 +222,14 @@ Running the bot in `tmux` keeps it alive even after you close the browser or SSH
 
    Leave this running. You will see log messages as the bot starts.
 
-4. Detach from the session without stopping the bot by pressing `Ctrl + B`, then `D`. The bot keeps running on the server.
-5. Whenever you want to check the session again, open the Terminal, activate the virtual environment, and run:
+5. Detach from the session without stopping the bot by pressing `Ctrl + B`, then `D`. The bot keeps running on the server.
+6. Whenever you want to check the session again, open the Terminal, activate the virtual environment, and run:
 
    ```bash
    tmux attach -t accountingbot
    ```
 
-6. To stop the bot, attach to the session and press `Ctrl + C`. When you are done, exit the session with the `exit` command.
+7. To stop the bot, attach to the session and press `Ctrl + C`. When you are done, exit the session with the `exit` command.
 
 Tips:
 

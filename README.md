@@ -141,6 +141,21 @@ AccountingBot needs a few secrets such as the Telegram bot token. Store them dir
 
 3. Click **Save** in the Environment variables box (some themes save automatically when you leave the field). Your values are now stored securely by cPanel.
 
+### Mirror the secrets into a `.env` file for SSH/tmux sessions
+
+When you start the bot from SSH (including inside `tmux`), the environment variables defined in the cPanel UI are **not** loaded into your shell automatically. Create a `.env` file in your project folder so the local commands can read the same secrets:
+
+```bash
+cat > .env <<'ENV'
+BOT_TOKEN=PASTE_THE_SAME_VALUE_USED_IN_CPANEL
+DATABASE_PATH=accounting.db
+LOG_FILE=accounting_bot.log
+# Add any other variables you defined in the cPanel UI.
+ENV
+```
+
+Replace the placeholders with your real values. Update both cPanel and `.env` any time you change a secret so they stay in sync.
+
 ---
 
 ## 6. Create the startup script that runs the bot
@@ -165,7 +180,7 @@ AccountingBot needs a few secrets such as the Telegram bot token. Store them dir
 
 2. Confirm the file exists by typing `cat start.py`.
 
-The script looks for a `.env` file (if you add one later) and then reads the environment variables stored in cPanel, so it adapts to either setup automatically.
+The script loads any values from `.env` before launching the bot so your secrets are available whether the process is started by cPanel or from a manual SSH session.
 
 ---
 
@@ -193,10 +208,10 @@ The script looks for a `.env` file (if you add one later) and then reads the env
 3. When the green status bar appears, run the bot inside the session:
 
    ```bash
-   python -m accountingbot.bot
+   python start.py
    ```
 
-   Leave this running—you will see log messages as the bot starts.
+   This command loads the `.env` file (so the secrets are available) and then starts `accountingbot.bot`. Leave it running—you will see log messages as the bot starts.
 
 4. Detach without stopping the bot by pressing `Ctrl + B`, then `D`. The bot keeps running in the background.
 

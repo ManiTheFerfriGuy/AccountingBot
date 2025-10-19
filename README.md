@@ -120,9 +120,11 @@ ZIP alternative:
 
 ---
 
-## 5. Add your secrets as cPanel environment variables
+## 5. Add your secrets (choose one method)
 
-Instead of creating a `.env` file, you will store the bot settings inside the **Setup Python App** page. cPanel passes these values to your program every time it starts.
+AccountingBot needs a few secrets such as the Telegram bot token. Pick the option that feels easiest—you only need **one** of the following methods.
+
+### Option A – Store secrets in cPanel (works well if you still plan to use Setup Python App later)
 
 1. Go back to the browser tab that shows the **Setup Python App** page for your application. Click **Edit** if the page is not already in edit mode.
 2. Scroll to the **Environment variables** section and click **Add Variable** for each item below. Type the name exactly as shown in the left column and put your value on the right:
@@ -139,7 +141,27 @@ Instead of creating a `.env` file, you will store the bot settings inside the **
 
 3. Click **Save** in the Environment variables box (some themes save automatically when you leave the field). Your values are now stored securely by cPanel.
 
-Tip: You can return to this section later to update any variable. There is no need to upload or edit files through the Terminal.
+### Option B – Create a `.env` file (best when running the bot yourself through SSH/tmux)
+
+1. In the Terminal, make sure you are in the project folder (`~/accountingbot`).
+2. Run the command below and paste your own values between the quotes:
+
+   ```bash
+   cat > .env <<'ENV'
+   BOT_TOKEN="paste-your-token-here"
+   DATABASE_PATH="accounting.db"
+   LOG_FILE="accounting_bot.log"
+   # Optional cPanel helper settings
+   CPANEL_HOST=""
+   CPANEL_USERNAME=""
+   CPANEL_API_TOKEN=""
+   CPANEL_VERIFY_SSL="true"
+   ENV
+   ```
+
+3. Press **Enter** after the final `ENV` line to finish the file. You can edit this file later with `nano .env` or any other text editor if you need to change a value.
+
+Tip: You can keep both the environment variables and the `.env` file if you want. The bot loads the values in this order: `.env` file first, then anything provided by cPanel.
 
 ---
 
@@ -165,35 +187,57 @@ Tip: You can return to this section later to update any variable. There is no ne
 
 2. Confirm the file exists by typing `cat start.py`.
 
-The script loads any environment variables provided by cPanel. If you ever decide to use a local `.env` file while testing on your own computer, the script will read that too.
+The script loads any environment variables from the `.env` file and then from cPanel (if you created them there). This means it works no matter which option you picked in the previous step.
 
 ---
 
-## 7. Tell cPanel how to start the bot
+## 7. Run the bot inside a `tmux` session (no need for the cPanel restart button)
 
-1. Go back to the **Setup Python App** tab.
-2. Click the **Edit** button on your application.
-3. Fill in the fields:
-   * **Startup file** – type `start.py`.
-   * **Application startup command** – on some cPanel versions this field is hidden or labelled **Passenger start command**.
-     If you see it, enter the same Python path you used earlier, followed by a space and `start.py`. Example:
+Running the bot in `tmux` keeps it alive even after you close the browser or SSH window. This method avoids relying on the cPanel web interface.
 
-     ```
-     /home/kingserv/virtualenv/accountingbot/3.10/bin/python start.py
-     ```
+1. In the Terminal, make sure your virtual environment is active (run the `source .../activate` command from Step 4 again if needed) and that you are inside the `~/accountingbot` folder.
+2. Start a new session named `accountingbot`:
 
-     If your page does not have this field, cPanel automatically runs the app with the Python interpreter from your virtual
-     environment, so leaving it empty is fine. Replace `kingserv` with your own username if necessary.
+   ```bash
+   tmux new -s accountingbot
+   ```
 
-4. Click **Save**.
-5. After saving, click **Restart** (or **Restart App** if that is what your version shows). cPanel will now run the bot. Whenever you change the code or update an environment variable, click **Restart** again.
+   If you see “command not found”, ask your hosting provider to enable `tmux` or install it for you. Most cPanel hosts provide it by default.
+
+3. Inside the new `tmux` window, run the bot:
+
+   ```bash
+   python -m accountingbot.bot
+   ```
+
+   Leave this running. You will see log messages as the bot starts.
+
+4. Detach from the session without stopping the bot by pressing `Ctrl + B`, then `D`. The bot keeps running on the server.
+5. Whenever you want to check the session again, open the Terminal, activate the virtual environment, and run:
+
+   ```bash
+   tmux attach -t accountingbot
+   ```
+
+6. To stop the bot, attach to the session and press `Ctrl + C`. When you are done, exit the session with the `exit` command.
+
+Tips:
+
+* After pulling new code or changing dependencies, stop the bot inside `tmux`, run your update commands, then start it again.
+* You can create multiple sessions if you run more than one bot—just give each session a unique name.
 
 ---
 
 ## 8. Check that the bot is running
 
-1. In the **Setup Python App** screen, click **View Logs**. Scroll to the bottom. You should see lines showing that the bot started without errors. If you see an error, read the message and compare it with the previous steps to find the issue.
-2. Still in the Terminal, you can watch the bot log file by running:
+1. Reattach to your `tmux` session to see the live output:
+
+   ```bash
+   tmux attach -t accountingbot
+   ```
+
+   You should see messages showing that the bot started successfully. If you need to step away, detach again with `Ctrl + B`, then `D`.
+2. Keep an eye on the log file (from a separate Terminal tab or window) if you want a quieter view:
 
    ```bash
    tail -f accounting_bot.log
@@ -206,10 +250,10 @@ The script loads any environment variables provided by cPanel. If you ever decid
 
 ## 9. Everyday tasks
 
-* **Restart after updates** – whenever you change files or install packages, click **Restart** inside **Setup Python App**.
-* **Update the code** – in the Terminal (with the virtual environment active), run `git pull`. Then run `pip install -r requirements.txt` again in case new packages were added. Finally, restart the app.
+* **Restart after updates** – attach to the `tmux` session, stop the bot with `Ctrl + C`, run any updates, then start it again with `python -m accountingbot.bot`.
+* **Update the code** – in the Terminal (with the virtual environment active), run `git pull`. Then run `pip install -r requirements.txt` again in case new packages were added. Start the bot again afterwards.
 * **Back up your data** – the bot stores its database in the file named in `DATABASE_PATH` (default `accounting.db`). Download it from **File Manager** or via SFTP to keep a backup.
-* **Keep secrets safe** – never share your Telegram bot token or expose the values you entered in the Environment variables section.
+* **Keep secrets safe** – never share your Telegram bot token or expose the values you entered in the Environment variables section or `.env` file.
 
 ---
 

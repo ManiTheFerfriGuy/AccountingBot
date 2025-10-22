@@ -30,6 +30,7 @@ _LANGUAGES = {
             "search": "🔍 Find a Record",
             "language": "🌐 Change Language",
             "list_people": "👥 All Contacts",
+            "export_transactions": "📁 Export Transactions",
             "cancel": "✖️ Cancel",
             "prompt_person_identifier": "Who would you like to work with? Send their ID (for example 42 or #42) or a name to look up.",
             "person_id_hint": "If you typed a name, I’ll show matches—then send the exact ID you want.",
@@ -99,6 +100,8 @@ _LANGUAGES = {
             "search_filters_hint": "Tip: Try filters such as \"balance>0\", \"debtors\", or enter an ID.",
             "language_prompt_codes": "Tap a button below or send a language code like EN.",
             "skip_optional": "Skip",
+            "export_success": "Here is the latest transaction export.",
+            "export_error": "I couldn't generate the export right now. Please try again later.",
         },
     ),
     "fa": LanguagePack(
@@ -116,6 +119,7 @@ _LANGUAGES = {
             "search": "🔍 جستجو",
             "language": "🌐 تغییر زبان",
             "list_people": "👥 فهرست مخاطبان",
+            "export_transactions": "📁 دریافت خروجی تراکنش‌ها",
             "cancel": "✖️ انصراف",
             "prompt_person_identifier": "می‌خواهید با چه کسی کار کنید؟ شناسه او را (مثلاً 42 یا ‎#42) بفرستید یا نامش را بنویسید تا جستجو کنم.",
             "person_id_hint": "اگر نام ارسال کنید، نتایج را نشان می‌دهم—سپس شناسه دقیق موردنظر را بفرستید.",
@@ -185,6 +189,8 @@ _LANGUAGES = {
             "search_filters_hint": "نکته: می‌توانید از فیلترهایی مانند «balance>0»، «debtors» یا وارد کردن شناسه استفاده کنید.",
             "language_prompt_codes": "از دکمه‌های زیر استفاده کنید یا کد زبان (مثلاً FA) را بفرستید.",
             "skip_optional": "رد کردن",
+            "export_success": "این هم خروجی تازه‌ی تراکنش‌ها.",
+            "export_error": "متأسفم، الان نتوانستم خروجی بسازم. لطفاً کمی بعد دوباره امتحان کنید.",
         },
     ),
 }

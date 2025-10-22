@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import logging
 import signal
 from datetime import datetime
 from html import escape
+from io import BytesIO, StringIO
 from typing import Optional
 
 from telegram import Update, constants
@@ -191,6 +193,7 @@ def compose_start_message(language: str) -> str:
         get_text("dashboard", language),
         get_text("search", language),
         get_text("list_people", language),
+        get_text("export_transactions", language),
         get_text("language", language),
     ]
     lines.extend(f"• {action}" for action in actions)
@@ -238,6 +241,46 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await target.reply_text(
         text,
         disable_web_page_preview=True,
+    )
+    clear_workflow(context)
+
+
+async def export_transactions_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    await answer_callback(update)
+    target = get_reply_target(update)
+    db: Database = context.bot_data["db"]
+
+    try:
+        rows = await db.export_transactions()
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["id", "person_id", "amount", "description", "created_at"])
+        for row in rows:
+            writer.writerow(
+                [
+                    row["id"],
+                    row["person_id"],
+                    row["amount"],
+                    row["description"],
+                    row["created_at"],
+                ]
+            )
+    except Exception:  # pragma: no cover - defensive logging
+        LOGGER.exception("Failed to export transactions")
+        await target.reply_text(get_text("export_error", language))
+        clear_workflow(context)
+        return
+
+    buffer.seek(0)
+    document = BytesIO(buffer.getvalue().encode("utf-8"))
+    document.name = f"transactions-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
+
+    await target.reply_document(
+        document,
+        caption=get_text("export_success", language),
     )
     clear_workflow(context)
 
@@ -817,8 +860,10 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", show_help))
     application.add_handler(CommandHandler("dashboard", show_dashboard))
+    application.add_handler(CommandHandler("export", export_transactions_handler))
     application.add_handler(CommandHandler("people", show_people_list))
     application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
+    application.add_handler(CallbackQueryHandler(export_transactions_handler, pattern="^menu:export$"))
     application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
 
     add_person_conv = ConversationHandler(

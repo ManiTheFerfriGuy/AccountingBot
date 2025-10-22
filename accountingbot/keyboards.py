@@ -43,6 +43,12 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
                     get_text("language", language), callback_data="menu:language"
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    get_text("export_transactions", language),
+                    callback_data="menu:export",
+                ),
+            ],
         ]
     )
 

@@ -30,7 +30,13 @@ from .database import (
     PersonAlreadyExistsError,
     SearchResponse,
 )
-from .keyboards import confirmation_keyboard, language_keyboard
+from .keyboards import (
+    cancel_keyboard,
+    confirmation_keyboard,
+    language_keyboard,
+    main_menu_keyboard,
+    skip_keyboard,
+)
 from .localization import available_languages, get_text
 
 # Conversation states
@@ -156,7 +162,7 @@ def compose_start_message(language: str) -> str:
         ("/help", get_text("help_label", language)),
         ("/cancel", get_text("cancel", language)),
     ]
-    lines.extend(f"{command} — {description}" for command, description in commands)
+    lines.extend(f"• {description} — {command}" for command, description in commands)
     lines.append("")
     lines.append(get_text("start_search_hint", language))
     lines.append(get_text("start_cancel_hint", language))
@@ -170,12 +176,14 @@ async def send_start_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             message,
             disable_web_page_preview=True,
+            reply_markup=main_menu_keyboard(language),
         )
     elif update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.edit_text(
             message,
             disable_web_page_preview=True,
+            reply_markup=main_menu_keyboard(language),
         )
 
 
@@ -223,7 +231,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     elif update.callback_query:
         await update.callback_query.answer(get_text("action_cancelled", language))
         await update.callback_query.message.edit_text(
-            get_text("action_cancelled", language)
+            get_text("action_cancelled", language),
+            reply_markup=None,
         )
     return ConversationHandler.END
 
@@ -233,7 +242,10 @@ async def prompt_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     clear_workflow(context)
     await answer_callback(update)
     target = get_reply_target(update)
-    await target.reply_text(get_text("enter_person_name", language))
+    await target.reply_text(
+        get_text("enter_person_name", language),
+        reply_markup=cancel_keyboard(language),
+    )
     return ADD_PERSON_NAME
 
 
@@ -264,8 +276,15 @@ async def prompt_person_selection(
     language = await get_language(context, update.effective_user.id)
     await answer_callback(update)
     target = get_reply_target(update)
-    await target.reply_text(get_text("prompt_person_identifier", language))
-    await target.reply_text(get_text("person_id_hint", language))
+    await target.reply_text(
+        "\n".join(
+            [
+                get_text("prompt_person_identifier", language),
+                get_text("person_id_hint", language),
+            ]
+        ),
+        reply_markup=cancel_keyboard(language),
+    )
     return context.user_data.get("person_state", ConversationHandler.END)
 
 
@@ -286,7 +305,10 @@ async def receive_person_reference(
         person = await db.get_person(int(normalized))
         if not person:
             await update.message.reply_text(get_text("not_found", language))
-            await update.message.reply_text(get_text("person_id_hint", language))
+            await update.message.reply_text(
+                get_text("person_id_hint", language),
+                reply_markup=cancel_keyboard(language),
+            )
             return state
     else:
         response = await db.search_people(text)
@@ -300,7 +322,10 @@ async def receive_person_reference(
                     suggestions=", ".join(response.suggestions)
                 )
             await update.message.reply_text(message)
-        await update.message.reply_text(get_text("person_id_hint", language))
+        await update.message.reply_text(
+            get_text("person_id_hint", language),
+            reply_markup=cancel_keyboard(language),
+        )
         return state
 
     context.user_data["person"] = person
@@ -340,7 +365,10 @@ async def receive_debt_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(get_text("invalid_number", language))
         return DEBT_AMOUNT
     context.user_data["amount"] = amount
-    await update.message.reply_text(get_text("enter_debt_description", language))
+    await update.message.reply_text(
+        get_text("enter_debt_description", language),
+        reply_markup=skip_keyboard(language, "debt"),
+    )
     return DEBT_DESCRIPTION
 
 
@@ -352,6 +380,14 @@ async def receive_debt_description(update: Update, context: ContextTypes.DEFAULT
 async def skip_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["description"] = ""
     flow = context.user_data.get("flow")
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_reply_markup(reply_markup=None)
+        data = query.data.split(":", 1)
+        if len(data) == 2:
+            flow = data[1]
+            context.user_data["flow"] = flow
     if flow == "payment":
         return await confirm_payment(update, context)
     return await confirm_debt(update, context)
@@ -472,7 +508,10 @@ async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_T
         return PAYMENT_AMOUNT
     context.user_data["amount"] = amount
     context.user_data.pop("description", None)
-    await update.message.reply_text(get_text("enter_payment_description", language))
+    await update.message.reply_text(
+        get_text("enter_payment_description", language),
+        reply_markup=skip_keyboard(language, "payment"),
+    )
     return PAYMENT_DESCRIPTION
 
 
@@ -600,7 +639,10 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             start_date = datetime.fromisoformat(start_str)
             end_date = datetime.fromisoformat(end_str)
         except ValueError:
-            await update.message.reply_text(get_text("invalid_date_range", language))
+            await update.message.reply_text(
+                get_text("invalid_date_range", language),
+                reply_markup=cancel_keyboard(language),
+            )
             return HISTORY_DATES
 
     history = await db.get_history(person.id, start=start_date, end=end_date)
@@ -625,6 +667,7 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode=constants.ParseMode.HTML,
+        reply_markup=cancel_keyboard(language),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -633,10 +676,15 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---- Search ----
 async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
+    await answer_callback(update)
+    target = get_reply_target(update)
     prompt = "\n".join(
         [get_text("search_prompt", language), get_text("search_filters_hint", language)]
     )
-    await update.message.reply_text(prompt)
+    await target.reply_text(
+        prompt,
+        reply_markup=cancel_keyboard(language),
+    )
     return SEARCH_QUERY
 
 
@@ -652,12 +700,18 @@ async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 suggestions=", ".join(response.suggestions)
             )
         await update.message.reply_text(message)
-        await update.message.reply_text(get_text("search_filters_hint", language))
+        await update.message.reply_text(
+            get_text("search_filters_hint", language),
+            reply_markup=cancel_keyboard(language),
+        )
         return SEARCH_QUERY
 
     formatted = format_search_results(language, response)
     await update.message.reply_text(formatted)
-    await update.message.reply_text(get_text("search_filters_hint", language))
+    await update.message.reply_text(
+        get_text("search_filters_hint", language),
+        reply_markup=cancel_keyboard(language),
+    )
     return SEARCH_QUERY
 
 
@@ -668,7 +722,7 @@ async def start_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     target = get_reply_target(update)
     await target.reply_text(
         get_text("language_prompt", language),
-        reply_markup=language_keyboard(),
+        reply_markup=language_keyboard(language),
     )
     return LANGUAGE_SELECTION
 
@@ -697,7 +751,7 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         language = await get_language(context, update.effective_user.id)
         await target.reply_text(
             get_text("language_prompt_codes", language),
-            reply_markup=language_keyboard(),
+            reply_markup=language_keyboard(language),
         )
         return LANGUAGE_SELECTION
 
@@ -739,10 +793,14 @@ def register_handlers(application: Application) -> None:
         ],
         states={
             ADD_PERSON_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+        ],
         name="add_person",
         persistent=False,
     )
@@ -755,23 +813,31 @@ def register_handlers(application: Application) -> None:
         ],
         states={
             DEBT_PERSON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             DEBT_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debt_amount)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debt_amount),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             DEBT_DESCRIPTION: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, receive_debt_description
                 ),
                 CommandHandler("skip", skip_description),
+                CallbackQueryHandler(skip_description, pattern="^skip:debt$"),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             DEBT_CONFIRM: [
                 CallbackQueryHandler(finalize_debt, pattern="^(confirm|back):debt$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_debt),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+        ],
         name="add_debt",
     )
     application.add_handler(add_debt_conv)
@@ -783,23 +849,31 @@ def register_handlers(application: Application) -> None:
         ],
         states={
             PAYMENT_PERSON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             PAYMENT_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_amount)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_amount),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             PAYMENT_DESCRIPTION: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, receive_payment_description
                 ),
                 CommandHandler("skip", skip_description),
+                CallbackQueryHandler(skip_description, pattern="^skip:payment$"),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             PAYMENT_CONFIRM: [
                 CallbackQueryHandler(finalize_payment, pattern="^(confirm|back):payment$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_payment),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+        ],
         name="payment",
     )
     application.add_handler(payment_conv)
@@ -811,13 +885,18 @@ def register_handlers(application: Application) -> None:
         ],
         states={
             HISTORY_PERSON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             HISTORY_DATES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+        ],
         name="history",
     )
     application.add_handler(history_conv)
@@ -826,13 +905,18 @@ def register_handlers(application: Application) -> None:
         ConversationHandler(
             entry_points=[
                 CommandHandler("search", start_search),
+                CallbackQueryHandler(start_search, pattern="^menu:search$"),
             ],
             states={
                 SEARCH_QUERY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, search_people)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ],
             name="search",
         )
     )
@@ -847,9 +931,13 @@ def register_handlers(application: Application) -> None:
                 LANGUAGE_SELECTION: [
                     CallbackQueryHandler(change_language, pattern="^lang:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, change_language),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ],
             name="language",
         )
     )

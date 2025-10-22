@@ -1,6 +1,6 @@
 # AccountingBot on cPanel — friendly setup guide
 
-This guide walks you from a blank cPanel account to a running copy of AccountingBot. It assumes you have never used SSH, tmux, or Python on a hosting provider before. Every step tells you exactly what to click or type, so read slowly and follow the order shown.
+This guide walks you from a blank cPanel account to a running copy of AccountingBot. It assumes you have never used SSH, GNU Screen, or Python on a hosting provider before. Every step tells you exactly what to click or type, so read slowly and follow the order shown.
 
 If something does not work, take a break, then try the step again. None of these instructions can damage your computer or your hosting account.
 
@@ -162,8 +162,8 @@ Run `cat start.py` to verify the file matches the content above.
 
 ---
 
-## 8. Run AccountingBot with tmux
-`tmux` keeps programs alive when you close the Terminal tab.
+## 8. Run AccountingBot with GNU Screen
+`screen` keeps programs alive when you close the Terminal tab.
 
 1. Activate the virtual environment and switch to the project folder if you have not already:
 
@@ -175,35 +175,35 @@ Run `cat start.py` to verify the file matches the content above.
 2. Start (or reconnect to) a session named `accountingbot`:
 
    ```bash
-   tmux new -As accountingbot
+   screen -S accountingbot -R
    ```
 
-   If `tmux` is missing, ask hosting support to enable it.
+   If `screen` is missing, ask hosting support to enable it.
 
-3. Inside the tmux session, start the bot:
+3. Inside the screen session, start the bot:
 
    ```bash
    python -m accountingbot.bot
    ```
 
-4. Leave the session running by pressing `Ctrl + B`, then `D` (detach). The bot continues in the background.
+4. Leave the session running by pressing `Ctrl + A`, then `D` (detach). The bot continues in the background.
 5. Reconnect later by repeating steps 1–2.
-6. To stop the bot, reattach to the session and press `Ctrl + C`. Type `exit` to close tmux completely.
+6. To stop the bot, reattach to the session and press `Ctrl + C`. Type `exit` to close screen completely.
 
 Tips:
-* After pulling new code or installing packages, stop the bot (`Ctrl + C`), run the updates, then start it again inside the same tmux session.
-* You can create other tmux sessions for different projects by changing the session name in the command.
+* After pulling new code or installing packages, stop the bot (`Ctrl + C`), run the updates, then start it again inside the same screen session.
+* You can create other screen sessions for different projects by changing the session name in the command.
 
 ---
 
 ## 9. Confirm that the bot is working
-1. Reattach to the tmux session to watch the live output:
+1. Reattach to the screen session to watch the live output:
 
    ```bash
-   tmux attach -t accountingbot
+   screen -r accountingbot
    ```
 
-   Detach again with `Ctrl + B`, then `D` when you are done.
+   Detach again with `Ctrl + A`, then `D` when you are done.
 
 2. Watch the log file from another Terminal tab if you prefer a quieter view:
 
@@ -218,7 +218,7 @@ Tips:
 ---
 
 ## 10. Routine maintenance
-* **Restart after updates**: attach to tmux, press `Ctrl + C`, run any updates, then start the bot with `python -m accountingbot.bot`.
+* **Restart after updates**: attach to screen, press `Ctrl + C`, run any updates, then start the bot with `python -m accountingbot.bot`.
 * **Update the code**: with the virtual environment active, run `git pull` followed by `pip install -r requirements.txt`.
 * **Back up data**: download the file defined by `DATABASE_PATH` (default `accounting.db`) using cPanel **File Manager** or SFTP.
 * **Protect secrets**: never share the values of `BOT_TOKEN`, `CPANEL_API_TOKEN`, or other sensitive variables.
@@ -232,7 +232,7 @@ Tips:
 | `source .../activate` fails | Copy the exact path from the Setup Python App screen again. |
 | `pip` cannot connect to the internet | Wait and retry. If it keeps failing, ask your hosting provider whether outbound connections are blocked. |
 | Bot does not answer in Telegram | Open **Setup Python App** → **View Logs** to check for errors. Confirm the `BOT_TOKEN` value. |
-| Terminal closed unexpectedly | Reopen Terminal, re-run `source .../activate`, then reattach to tmux. |
+| Terminal closed unexpectedly | Reopen Terminal, re-run `source .../activate`, then reattach to screen. |
 | Permission errors writing logs or database | Make sure `LOG_FILE` and `DATABASE_PATH` point to locations inside your home directory. |
 | SSL errors when calling Telegram or cPanel | Confirm the server allows HTTPS. If your host uses a self-signed certificate, temporarily set `CPANEL_VERIFY_SSL=false` while you install a trusted certificate. |
 
@@ -246,6 +246,6 @@ You now have:
 2. AccountingBot files cloned into the application root.
 3. Dependencies installed inside a virtual environment.
 4. Secrets stored as environment variables (and optional `secrets.json`).
-5. A tmux session running `python -m accountingbot.bot`.
+5. A screen session running `python -m accountingbot.bot`.
 
 Keep this guide bookmarked so you can repeat or adjust any step later. For Telegram-specific questions (webhook bans, rate limits, etc.), review the [Telegram Bot API FAQ](https://core.telegram.org/bots/faq).

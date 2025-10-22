@@ -148,21 +148,52 @@ def format_dashboard(summary: DashboardSummary, language: str) -> str:
     return "\n".join(lines)
 
 
+async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = await get_language(context, update.effective_user.id)
+    if update.callback_query:
+        await update.callback_query.answer()
+    target = get_reply_target(update)
+    db: Database = context.bot_data["db"]
+    people = await db.list_people()
+    if not people:
+        await target.reply_text(get_text("no_people", language))
+        return
+
+    header = get_text("people_list_header", language).format(count=len(people))
+    lines = [header]
+    lines.extend(f"• {person.name} (#{person.id})" for person in people)
+
+    max_length = 3500
+    chunk = ""
+    for line in lines:
+        candidate = f"{chunk}\n{line}" if chunk else line
+        if len(candidate) > max_length and chunk:
+            await target.reply_text(chunk)
+            chunk = line
+        else:
+            chunk = candidate
+
+    if chunk:
+        await target.reply_text(chunk)
+
+    clear_workflow(context)
+
+
 def compose_start_message(language: str) -> str:
     lines = [get_text("start_message", language), ""]
     lines.append(get_text("start_command_overview", language))
-    commands = [
-        ("/add_person", get_text("add_person", language)),
-        ("/add_debt", get_text("add_debt", language)),
-        ("/record_payment", get_text("pay_debt", language)),
-        ("/history", get_text("history", language)),
-        ("/dashboard", get_text("dashboard", language)),
-        ("/search", get_text("search", language)),
-        ("/language", get_text("language", language)),
-        ("/help", get_text("help_label", language)),
-        ("/cancel", get_text("cancel", language)),
+    lines.append("")
+    actions = [
+        get_text("add_person", language),
+        get_text("add_debt", language),
+        get_text("pay_debt", language),
+        get_text("history", language),
+        get_text("dashboard", language),
+        get_text("search", language),
+        get_text("list_people", language),
+        get_text("language", language),
     ]
-    lines.extend(f"• {description} — {command}" for command, description in commands)
+    lines.extend(f"• {action}" for action in actions)
     lines.append("")
     lines.append(get_text("start_search_hint", language))
     lines.append(get_text("start_cancel_hint", language))
@@ -784,7 +815,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", show_help))
     application.add_handler(CommandHandler("dashboard", show_dashboard))
+    application.add_handler(CommandHandler("people", show_people_list))
     application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
+    application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
 
     add_person_conv = ConversationHandler(
         entry_points=[

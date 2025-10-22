@@ -366,17 +366,23 @@ class Database:
 
         return SearchResponse(query=query, matches=matches, suggestions=suggestions)
 
-    async def list_people(self, limit: int = 50, offset: int = 0) -> List[Person]:
+    async def list_people(
+        self, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Person]:
         async with self._connection() as conn:
-            cursor = await asyncio.to_thread(
-                conn.execute,
-                """
+            query = """
                 SELECT id, name, created_at
                 FROM people
                 ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
+            """
+            params: Tuple[object, ...] = ()
+            if limit is not None:
+                query += " LIMIT ? OFFSET ?"
+                params = (limit, offset)
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                query,
+                params,
             )
             rows = await asyncio.to_thread(cursor.fetchall)
         return [

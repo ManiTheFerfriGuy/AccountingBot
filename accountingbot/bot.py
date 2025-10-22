@@ -696,7 +696,8 @@ def register_handlers(application: Application) -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
             ],
             HISTORY_DATES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
+                CommandHandler("skip", fetch_history),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

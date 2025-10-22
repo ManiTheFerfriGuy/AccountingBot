@@ -13,6 +13,7 @@ from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     ContextTypes,
@@ -29,6 +30,7 @@ from .database import (
     PersonAlreadyExistsError,
     SearchResponse,
 )
+from .keyboards import confirmation_keyboard, language_keyboard, main_menu
 from .localization import available_languages, get_text
 
 # Conversation states
@@ -50,6 +52,19 @@ async def get_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
     language = await db.get_user_language(user_id)
     context.user_data["language"] = language
     return language
+
+
+def get_reply_target(update: Update):
+    if update.message:
+        return update.message
+    if update.callback_query:
+        return update.callback_query.message
+    raise ValueError("No reply target available")
+
+
+async def answer_callback(update: Update) -> None:
+    if update.callback_query:
+        await update.callback_query.answer()
 
 
 def format_balance_status(balance: float, language: str) -> str:
@@ -152,10 +167,18 @@ async def send_start_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     language = await get_language(context, update.effective_user.id)
     message = compose_start_message(language)
     if update.message:
-        await update.message.reply_text(message)
+        await update.message.reply_text(
+            message,
+            reply_markup=main_menu(language),
+            disable_web_page_preview=True,
+        )
     elif update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(message)
+        await update.callback_query.message.edit_text(
+            message,
+            reply_markup=main_menu(language),
+            disable_web_page_preview=True,
+        )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -172,11 +195,14 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     db: Database = context.bot_data["db"]
     summary = await db.get_dashboard_summary()
     text = format_dashboard(summary, language)
-    if update.message:
-        await update.message.reply_text(text)
-    elif update.callback_query:
+    if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text)
+    target = get_reply_target(update)
+    await target.reply_text(
+        text,
+        reply_markup=main_menu(language),
+        disable_web_page_preview=True,
+    )
     clear_workflow(context)
 
 
@@ -208,7 +234,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def prompt_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
     clear_workflow(context)
-    await update.message.reply_text(get_text("enter_person_name", language))
+    await answer_callback(update)
+    target = get_reply_target(update)
+    await target.reply_text(get_text("enter_person_name", language))
     return ADD_PERSON_NAME
 
 
@@ -227,7 +255,8 @@ async def save_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return ADD_PERSON_NAME
     await update.message.reply_text(
-        get_text("person_added", language).format(name=person.name, id=person.id)
+        get_text("person_added", language).format(name=person.name, id=person.id),
+        reply_markup=main_menu(language),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -237,8 +266,10 @@ async def prompt_person_selection(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     language = await get_language(context, update.effective_user.id)
-    await update.message.reply_text(get_text("prompt_person_identifier", language))
-    await update.message.reply_text(get_text("person_id_hint", language))
+    await answer_callback(update)
+    target = get_reply_target(update)
+    await target.reply_text(get_text("prompt_person_identifier", language))
+    await target.reply_text(get_text("person_id_hint", language))
     return context.user_data.get("person_state", ConversationHandler.END)
 
 
@@ -341,21 +372,58 @@ async def confirm_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
     else:
         text = get_text("confirm_debt", language).format(name=person.name, amount=amount)
-    instructions = get_text("confirm_instructions", language).format(
-        confirm=get_text("confirm_keyword", language),
-        back=get_text("back", language),
+    await answer_callback(update)
+    target = get_reply_target(update)
+    await target.reply_text(
+        text,
+        reply_markup=confirmation_keyboard(language, "debt"),
     )
-    await update.message.reply_text(f"{text}\n\n{instructions}")
     return DEBT_CONFIRM
 
 
 async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_reply_markup(reply_markup=None)
+        action = query.data
+        person: Person = context.user_data["person"]
+        if action == "back:debt":
+            context.user_data.pop("amount", None)
+            context.user_data.pop("description", None)
+            await query.message.reply_text(
+                get_text("enter_debt_amount", language).format(name=person.name)
+            )
+            return DEBT_AMOUNT
+        if action != "confirm:debt":
+            return DEBT_CONFIRM
+        db: Database = context.bot_data["db"]
+        amount = context.user_data["amount"]
+        description = context.user_data.get("description", "")
+        await db.add_transaction(person.id, amount, description)
+        balance = await db.get_balance(person.id)
+        await query.message.reply_text(
+            get_text("debt_recorded", language).format(
+                name=person.name, amount=amount, balance=balance
+            ),
+            reply_markup=main_menu(language),
+        )
+        LOGGER.info(
+            "Debt recorded for person_id=%s amount=%s description=%s",
+            person.id,
+            amount,
+            description,
+        )
+        clear_workflow(context)
+        return ConversationHandler.END
+
+    # Fallback for text-based confirmation
     text = update.message.text.strip().casefold()
     confirm_word = get_text("confirm_keyword", language).casefold()
     back_word = get_text("back", language).casefold()
 
-    person: Person = context.user_data["person"]
+    person = context.user_data["person"]
     if text == back_word:
         context.user_data.pop("amount", None)
         context.user_data.pop("description", None)
@@ -372,7 +440,7 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return DEBT_CONFIRM
 
-    db: Database = context.bot_data["db"]
+    db = context.bot_data["db"]
     amount = context.user_data["amount"]
     description = context.user_data.get("description", "")
     await db.add_transaction(person.id, amount, description)
@@ -380,7 +448,8 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(
         get_text("debt_recorded", language).format(
             name=person.name, amount=amount, balance=balance
-        )
+        ),
+        reply_markup=main_menu(language),
     )
     LOGGER.info(
         "Debt recorded for person_id=%s amount=%s description=%s", person.id, amount, description
@@ -431,21 +500,57 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         text = get_text("confirm_payment", language).format(name=person.name, amount=amount)
-    instructions = get_text("confirm_instructions", language).format(
-        confirm=get_text("confirm_keyword", language),
-        back=get_text("back", language),
+    await answer_callback(update)
+    target = get_reply_target(update)
+    await target.reply_text(
+        text,
+        reply_markup=confirmation_keyboard(language, "payment"),
     )
-    await update.message.reply_text(f"{text}\n\n{instructions}")
     return PAYMENT_CONFIRM
 
 
 async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_reply_markup(reply_markup=None)
+        action = query.data
+        person: Person = context.user_data["person"]
+        if action == "back:payment":
+            context.user_data.pop("amount", None)
+            context.user_data.pop("description", None)
+            await query.message.reply_text(
+                get_text("enter_payment_amount", language).format(name=person.name)
+            )
+            return PAYMENT_AMOUNT
+        if action != "confirm:payment":
+            return PAYMENT_CONFIRM
+        db: Database = context.bot_data["db"]
+        amount = -abs(context.user_data["amount"])
+        description = context.user_data.get("description", "")
+        await db.add_transaction(person.id, amount, description)
+        balance = await db.get_balance(person.id)
+        await query.message.reply_text(
+            get_text("payment_recorded", language).format(
+                name=person.name, balance=balance
+            ),
+            reply_markup=main_menu(language),
+        )
+        LOGGER.info(
+            "Payment recorded for person_id=%s amount=%s description=%s",
+            person.id,
+            amount,
+            description,
+        )
+        clear_workflow(context)
+        return ConversationHandler.END
+
     text = update.message.text.strip().casefold()
     confirm_word = get_text("confirm_keyword", language).casefold()
     back_word = get_text("back", language).casefold()
 
-    person: Person = context.user_data["person"]
+    person = context.user_data["person"]
     if text == back_word:
         context.user_data.pop("amount", None)
         context.user_data.pop("description", None)
@@ -462,7 +567,7 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return PAYMENT_CONFIRM
 
-    db: Database = context.bot_data["db"]
+    db = context.bot_data["db"]
     amount = -abs(context.user_data["amount"])
     description = context.user_data.get("description", "")
     await db.add_transaction(person.id, amount, description)
@@ -470,7 +575,8 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(
         get_text("payment_recorded", language).format(
             name=person.name, balance=balance
-        )
+        ),
+        reply_markup=main_menu(language),
     )
     LOGGER.info(
         "Payment recorded for person_id=%s amount=%s description=%s", person.id, amount, description
@@ -527,6 +633,7 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode=constants.ParseMode.HTML,
+        reply_markup=main_menu(language),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -566,35 +673,40 @@ async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---- Language ----
 async def start_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
-    options = ", ".join(
-        f"{code} ({label})" for code, label in available_languages().items()
+    await answer_callback(update)
+    target = get_reply_target(update)
+    await target.reply_text(
+        get_text("language_prompt", language),
+        reply_markup=language_keyboard(),
     )
-    message = "\n".join(
-        [
-            get_text("language_prompt", language),
-            get_text("language_prompt_codes", language).format(codes=options),
-        ]
-    )
-    await update.message.reply_text(message)
     return LANGUAGE_SELECTION
 
 
 async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    requested = update.message.text.strip().casefold()
     languages = available_languages()
     matched_code: Optional[str] = None
-    for code, label in languages.items():
-        if requested == code.casefold() or requested == label.casefold():
-            matched_code = code
-            break
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        payload = query.data.split(":", 1)[-1]
+        if payload in languages:
+            matched_code = payload
+        target = query.message
+        if matched_code:
+            await query.message.edit_reply_markup(reply_markup=None)
+    else:
+        requested = update.message.text.strip().casefold()
+        for code, label in languages.items():
+            if requested == code.casefold() or requested == label.casefold():
+                matched_code = code
+                break
+        target = update.message
 
     if not matched_code:
         language = await get_language(context, update.effective_user.id)
-        options = ", ".join(
-            f"{code} ({label})" for code, label in languages.items()
-        )
-        await update.message.reply_text(
-            get_text("language_prompt_codes", language).format(codes=options)
+        await target.reply_text(
+            get_text("language_prompt_codes", language),
+            reply_markup=language_keyboard(),
         )
         return LANGUAGE_SELECTION
 
@@ -602,8 +714,9 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await db.set_user_language(update.effective_user.id, matched_code)
     context.user_data["language"] = matched_code
     label = languages[matched_code]
-    await update.message.reply_text(
-        get_text("language_updated", matched_code).format(language=label)
+    await target.reply_text(
+        get_text("language_updated", matched_code).format(language=label),
+        reply_markup=main_menu(matched_code),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -627,9 +740,13 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", show_help))
     application.add_handler(CommandHandler("dashboard", show_dashboard))
+    application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
 
     add_person_conv = ConversationHandler(
-        entry_points=[CommandHandler("add_person", prompt_person_name)],
+        entry_points=[
+            CommandHandler("add_person", prompt_person_name),
+            CallbackQueryHandler(prompt_person_name, pattern="^menu:add_person$"),
+        ],
         states={
             ADD_PERSON_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name)
@@ -642,7 +759,10 @@ def register_handlers(application: Application) -> None:
     application.add_handler(add_person_conv)
 
     add_debt_conv = ConversationHandler(
-        entry_points=[CommandHandler("add_debt", start_add_debt)],
+        entry_points=[
+            CommandHandler("add_debt", start_add_debt),
+            CallbackQueryHandler(start_add_debt, pattern="^menu:add_debt$"),
+        ],
         states={
             DEBT_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
@@ -657,7 +777,8 @@ def register_handlers(application: Application) -> None:
                 CommandHandler("skip", skip_description),
             ],
             DEBT_CONFIRM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_debt)
+                CallbackQueryHandler(finalize_debt, pattern="^(confirm|back):debt$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_debt),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -666,7 +787,10 @@ def register_handlers(application: Application) -> None:
     application.add_handler(add_debt_conv)
 
     payment_conv = ConversationHandler(
-        entry_points=[CommandHandler("record_payment", start_payment)],
+        entry_points=[
+            CommandHandler("record_payment", start_payment),
+            CallbackQueryHandler(start_payment, pattern="^menu:pay_debt$"),
+        ],
         states={
             PAYMENT_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
@@ -681,7 +805,8 @@ def register_handlers(application: Application) -> None:
                 CommandHandler("skip", skip_description),
             ],
             PAYMENT_CONFIRM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_payment)
+                CallbackQueryHandler(finalize_payment, pattern="^(confirm|back):payment$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, finalize_payment),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -690,7 +815,10 @@ def register_handlers(application: Application) -> None:
     application.add_handler(payment_conv)
 
     history_conv = ConversationHandler(
-        entry_points=[CommandHandler("history", start_history)],
+        entry_points=[
+            CommandHandler("history", start_history),
+            CallbackQueryHandler(start_history, pattern="^menu:history$"),
+        ],
         states={
             HISTORY_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference)
@@ -721,10 +849,14 @@ def register_handlers(application: Application) -> None:
 
     application.add_handler(
         ConversationHandler(
-            entry_points=[CommandHandler("language", start_language)],
+            entry_points=[
+                CommandHandler("language", start_language),
+                CallbackQueryHandler(start_language, pattern="^menu:language$"),
+            ],
             states={
                 LANGUAGE_SELECTION: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, change_language)
+                    CallbackQueryHandler(change_language, pattern="^lang:"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, change_language),
                 ]
             },
             fallbacks=[CommandHandler("cancel", cancel)],
@@ -732,6 +864,7 @@ def register_handlers(application: Application) -> None:
         )
     )
 
+    application.add_handler(CallbackQueryHandler(send_start_message, pattern="^menu:.*$"))
     application.add_handler(MessageHandler(filters.COMMAND, unknown))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 

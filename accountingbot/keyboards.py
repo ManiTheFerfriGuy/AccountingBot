@@ -1,26 +1,41 @@
 """Keyboard helpers for AccountingBot."""
 from __future__ import annotations
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .localization import get_text
 
 
-def main_menu(language: str) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
+def main_menu(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
         [
             [
-                get_text("add_person", language),
-                get_text("add_debt", language),
+                InlineKeyboardButton(
+                    get_text("add_person", language), callback_data="menu:add_person"
+                ),
+                InlineKeyboardButton(
+                    get_text("add_debt", language), callback_data="menu:add_debt"
+                ),
             ],
             [
-                get_text("pay_debt", language),
-                get_text("history", language),
+                InlineKeyboardButton(
+                    get_text("pay_debt", language), callback_data="menu:pay_debt"
+                ),
+                InlineKeyboardButton(
+                    get_text("history", language), callback_data="menu:history"
+                ),
             ],
-            [get_text("dashboard", language)],
-            [get_text("language", language)],
-        ],
-        resize_keyboard=True,
+            [
+                InlineKeyboardButton(
+                    get_text("dashboard", language), callback_data="menu:dashboard"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("language", language), callback_data="menu:language"
+                )
+            ],
+        ]
     )
 
 
@@ -43,8 +58,16 @@ def selection_method_keyboard(language: str) -> InlineKeyboardMarkup:
 def confirmation_keyboard(language: str, action: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(get_text("confirmed", language), callback_data=f"confirm:{action}")],
-            [InlineKeyboardButton(get_text("back", language), callback_data="back")],
+            [
+                InlineKeyboardButton(
+                    get_text("confirmed", language), callback_data=f"confirm:{action}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data=f"back:{action}"
+                )
+            ],
         ]
     )
 

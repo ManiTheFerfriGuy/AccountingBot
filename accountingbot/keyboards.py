@@ -37,10 +37,10 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    get_text("language", language), callback_data="menu:language"
+                    get_text("list_people", language), callback_data="menu:list_people"
                 ),
                 InlineKeyboardButton(
-                    get_text("help_label", language), callback_data="menu:help"
+                    get_text("language", language), callback_data="menu:language"
                 ),
             ],
         ]

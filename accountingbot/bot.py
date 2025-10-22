@@ -35,6 +35,7 @@ from .keyboards import (
     confirmation_keyboard,
     language_keyboard,
     main_menu_keyboard,
+    search_results_keyboard,
     skip_keyboard,
 )
 from .localization import available_languages, get_text
@@ -319,6 +320,35 @@ async def prompt_person_selection(
     return context.user_data.get("person_state", ConversationHandler.END)
 
 
+async def advance_person_workflow(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    person: Person,
+    language: str,
+) -> int:
+    context.user_data["person"] = person
+    target = get_reply_target(update)
+    next_state = context.user_data.get("person_next_state", ConversationHandler.END)
+
+    if next_state == DEBT_AMOUNT:
+        await target.reply_text(
+            get_text("enter_debt_amount", language).format(name=person.name)
+        )
+        return DEBT_AMOUNT
+    if next_state == PAYMENT_AMOUNT:
+        await target.reply_text(
+            get_text("enter_payment_amount", language).format(name=person.name)
+        )
+        return PAYMENT_AMOUNT
+    if next_state == HISTORY_DATES:
+        await target.reply_text(get_text("prompt_date_range", language))
+        return HISTORY_DATES
+
+    if context.user_data.get("person_state") == SEARCH_QUERY:
+        return SEARCH_QUERY
+    return ConversationHandler.END
+
+
 async def receive_person_reference(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -345,7 +375,8 @@ async def receive_person_reference(
         response = await db.search_people(text)
         if response.matches:
             formatted = format_search_results(language, response)
-            await update.message.reply_text(formatted)
+            keyboard = search_results_keyboard(response.matches)
+            await update.message.reply_text(formatted, reply_markup=keyboard)
         else:
             message = get_text("not_found", language)
             if response.suggestions:
@@ -359,22 +390,52 @@ async def receive_person_reference(
         )
         return state
 
-    context.user_data["person"] = person
-    next_state = context.user_data.get("person_next_state", ConversationHandler.END)
-    if next_state == DEBT_AMOUNT:
-        await update.message.reply_text(
-            get_text("enter_debt_amount", language).format(name=person.name)
+    return await advance_person_workflow(update, context, person, language)
+
+
+async def _handle_person_selection_failure(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, language: str
+) -> int:
+    target = get_reply_target(update)
+    await target.reply_text(get_text("not_found", language))
+    state = context.user_data.get("person_state", ConversationHandler.END)
+    if state == SEARCH_QUERY:
+        await target.reply_text(
+            get_text("search_filters_hint", language),
+            reply_markup=cancel_keyboard(language),
         )
-        return DEBT_AMOUNT
-    if next_state == PAYMENT_AMOUNT:
-        await update.message.reply_text(
-            get_text("enter_payment_amount", language).format(name=person.name)
+        return SEARCH_QUERY
+    if state != ConversationHandler.END:
+        await target.reply_text(
+            get_text("person_id_hint", language),
+            reply_markup=cancel_keyboard(language),
         )
-        return PAYMENT_AMOUNT
-    if next_state == HISTORY_DATES:
-        await update.message.reply_text(get_text("prompt_date_range", language))
-        return HISTORY_DATES
-    return ConversationHandler.END
+    return state
+
+
+async def handle_person_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    await query.answer()
+    if query.message:
+        await query.message.edit_reply_markup(reply_markup=None)
+
+    payload = query.data.split(":", 1)
+    if len(payload) != 2 or not payload[1].isdigit():
+        return await _handle_person_selection_failure(update, context, language)
+
+    person_id = int(payload[1])
+    db: Database = context.bot_data["db"]
+    person = await db.get_person(person_id)
+    if not person:
+        return await _handle_person_selection_failure(update, context, language)
+
+    return await advance_person_workflow(update, context, person, language)
 
 
 # ---- Add Debt ----
@@ -707,6 +768,8 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---- Search ----
 async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
+    context.user_data["person_state"] = SEARCH_QUERY
+    context.user_data.pop("person_next_state", None)
     await answer_callback(update)
     target = get_reply_target(update)
     prompt = "\n".join(
@@ -738,7 +801,8 @@ async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return SEARCH_QUERY
 
     formatted = format_search_results(language, response)
-    await update.message.reply_text(formatted)
+    keyboard = search_results_keyboard(response.matches)
+    await update.message.reply_text(formatted, reply_markup=keyboard)
     await update.message.reply_text(
         get_text("search_filters_hint", language),
         reply_markup=cancel_keyboard(language),
@@ -847,6 +911,7 @@ def register_handlers(application: Application) -> None:
         states={
             DEBT_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                 CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             DEBT_AMOUNT: [
@@ -883,6 +948,7 @@ def register_handlers(application: Application) -> None:
         states={
             PAYMENT_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                 CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             PAYMENT_AMOUNT: [
@@ -919,6 +985,7 @@ def register_handlers(application: Application) -> None:
         states={
             HISTORY_PERSON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                 CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
             ],
             HISTORY_DATES: [
@@ -943,6 +1010,7 @@ def register_handlers(application: Application) -> None:
             states={
                 SEARCH_QUERY: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ],
             },

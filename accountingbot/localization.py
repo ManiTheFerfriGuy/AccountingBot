@@ -95,7 +95,7 @@ _LANGUAGES = {
             "search_result_item": "{index}. {name} (#{id}) — {status} • {score}% match",
             "search_suggestions": "No direct matches. Perhaps you meant: {suggestions}?",
             "search_filters_hint": "Tip: Try filters such as \"balance>0\", \"debtors\", or enter an ID.",
-            "language_prompt_codes": "Available languages: {codes}. Send the code you’d like me to use.",
+            "language_prompt_codes": "Tap a button below or send a language code like EN.",
         },
     ),
     "fa": LanguagePack(
@@ -178,7 +178,7 @@ _LANGUAGES = {
             "search_result_item": "{index}. {name} (#{id}) — {status} • میزان تطابق {score}٪",
             "search_suggestions": "نتیجه مستقیمی نبود. شاید منظور شما این گزینه‌هاست: {suggestions}؟",
             "search_filters_hint": "نکته: می‌توانید از فیلترهایی مانند «balance>0»، «debtors» یا وارد کردن شناسه استفاده کنید.",
-            "language_prompt_codes": "زبان‌های موجود: {codes}. کد دلخواه را ارسال کنید.",
+            "language_prompt_codes": "از دکمه‌های زیر استفاده کنید یا کد زبان (مثلاً FA) را بفرستید.",
         },
     ),
 }

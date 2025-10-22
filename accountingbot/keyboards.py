@@ -6,39 +6,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .localization import get_text
 
 
-def main_menu(language: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    get_text("add_person", language), callback_data="menu:add_person"
-                ),
-                InlineKeyboardButton(
-                    get_text("add_debt", language), callback_data="menu:add_debt"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    get_text("pay_debt", language), callback_data="menu:pay_debt"
-                ),
-                InlineKeyboardButton(
-                    get_text("history", language), callback_data="menu:history"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    get_text("dashboard", language), callback_data="menu:dashboard"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    get_text("language", language), callback_data="menu:language"
-                )
-            ],
-        ]
-    )
-
-
 def selection_method_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

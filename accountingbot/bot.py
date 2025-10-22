@@ -30,7 +30,7 @@ from .database import (
     PersonAlreadyExistsError,
     SearchResponse,
 )
-from .keyboards import confirmation_keyboard, language_keyboard, main_menu
+from .keyboards import confirmation_keyboard, language_keyboard
 from .localization import available_languages, get_text
 
 # Conversation states
@@ -169,14 +169,12 @@ async def send_start_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if update.message:
         await update.message.reply_text(
             message,
-            reply_markup=main_menu(language),
             disable_web_page_preview=True,
         )
     elif update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.edit_text(
             message,
-            reply_markup=main_menu(language),
             disable_web_page_preview=True,
         )
 
@@ -200,7 +198,6 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     target = get_reply_target(update)
     await target.reply_text(
         text,
-        reply_markup=main_menu(language),
         disable_web_page_preview=True,
     )
     clear_workflow(context)
@@ -256,7 +253,6 @@ async def save_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ADD_PERSON_NAME
     await update.message.reply_text(
         get_text("person_added", language).format(name=person.name, id=person.id),
-        reply_markup=main_menu(language),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -407,7 +403,6 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             get_text("debt_recorded", language).format(
                 name=person.name, amount=amount, balance=balance
             ),
-            reply_markup=main_menu(language),
         )
         LOGGER.info(
             "Debt recorded for person_id=%s amount=%s description=%s",
@@ -449,7 +444,6 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         get_text("debt_recorded", language).format(
             name=person.name, amount=amount, balance=balance
         ),
-        reply_markup=main_menu(language),
     )
     LOGGER.info(
         "Debt recorded for person_id=%s amount=%s description=%s", person.id, amount, description
@@ -535,7 +529,6 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             get_text("payment_recorded", language).format(
                 name=person.name, balance=balance
             ),
-            reply_markup=main_menu(language),
         )
         LOGGER.info(
             "Payment recorded for person_id=%s amount=%s description=%s",
@@ -576,7 +569,6 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         get_text("payment_recorded", language).format(
             name=person.name, balance=balance
         ),
-        reply_markup=main_menu(language),
     )
     LOGGER.info(
         "Payment recorded for person_id=%s amount=%s description=%s", person.id, amount, description
@@ -633,7 +625,6 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode=constants.ParseMode.HTML,
-        reply_markup=main_menu(language),
     )
     clear_workflow(context)
     return ConversationHandler.END
@@ -716,7 +707,6 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     label = languages[matched_code]
     await target.reply_text(
         get_text("language_updated", matched_code).format(language=label),
-        reply_markup=main_menu(matched_code),
     )
     clear_workflow(context)
     return ConversationHandler.END

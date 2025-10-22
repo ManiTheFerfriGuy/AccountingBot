@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from datetime import datetime
 from html import escape
 from typing import Optional
@@ -1023,9 +1024,26 @@ async def main() -> None:
     await application.start()
     LOGGER.info("Bot started")
     await application.updater.start_polling()
+
+    stop_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
     try:
-        await application.updater.wait()
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGABRT):
+            loop.add_signal_handler(sig, _signal_handler)
+    except NotImplementedError:
+        LOGGER.warning("Signal handlers are not supported on this platform")
+
+    try:
+        await stop_event.wait()
+    except (KeyboardInterrupt, SystemExit):
+        LOGGER.info("Shutdown requested by user")
     finally:
+        if application.updater.running:
+            await application.updater.stop()
         await application.stop()
         await application.shutdown()
 

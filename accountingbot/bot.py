@@ -676,7 +676,9 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             )
             return HISTORY_DATES
 
-    history = await db.get_history(person.id, start=start_date, end=end_date)
+    history = await db.get_history(
+        person.id, start_date=start_date, end_date=end_date
+    )
     if not history:
         await update.message.reply_text(get_text("history_empty", language))
         clear_workflow(context)

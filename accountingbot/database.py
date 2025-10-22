@@ -460,10 +460,10 @@ class Database:
 
         if start_date:
             query.append("AND created_at >= ?")
-            params.append(start_date.isoformat())
+            params.append(start_date.isoformat(sep=" "))
         if end_date:
             query.append("AND created_at <= ?")
-            params.append(end_date.isoformat())
+            params.append(end_date.isoformat(sep=" "))
 
         query.append("ORDER BY created_at DESC")
         sql = " ".join(query)

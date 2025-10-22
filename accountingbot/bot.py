@@ -923,7 +923,7 @@ def register_handlers(application: Application) -> None:
             ],
             HISTORY_DATES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                CommandHandler("skip", fetch_history),
             ],
         },
         fallbacks=[

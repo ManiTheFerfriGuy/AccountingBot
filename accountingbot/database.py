@@ -113,7 +113,6 @@ class Database:
         """Initialize the database schema."""
 
         async with self._connection() as conn:
-            await asyncio.to_thread(self._apply_pragmas, conn)
             await asyncio.to_thread(
                 conn.executescript,
                 """
@@ -138,14 +137,23 @@ class Database:
                     language TEXT NOT NULL DEFAULT 'en',
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_people_name ON people(name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_transactions_person_created_at
+                    ON transactions(person_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_transactions_created_at
+                    ON transactions(created_at DESC);
                 """,
             )
             await asyncio.to_thread(conn.commit)
         LOGGER.info("Database initialized at %s", self.db_path)
 
-    def _apply_pragmas(self, conn: sqlite3.Connection) -> None:
+    def _configure_connection(self, conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
 
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[sqlite3.Connection]:
@@ -159,6 +167,7 @@ class Database:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        self._configure_connection(conn)
         return conn
 
     async def add_person(self, name: str) -> Person:
@@ -357,17 +366,23 @@ class Database:
 
         return SearchResponse(query=query, matches=matches, suggestions=suggestions)
 
-    async def list_people(self, limit: int = 50, offset: int = 0) -> List[Person]:
+    async def list_people(
+        self, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Person]:
         async with self._connection() as conn:
-            cursor = await asyncio.to_thread(
-                conn.execute,
-                """
+            query = """
                 SELECT id, name, created_at
                 FROM people
                 ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
+            """
+            params: Tuple[object, ...] = ()
+            if limit is not None:
+                query += " LIMIT ? OFFSET ?"
+                params = (limit, offset)
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                query,
+                params,
             )
             rows = await asyncio.to_thread(cursor.fetchall)
         return [

@@ -160,6 +160,8 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     people = await db.list_people()
     if not people:
         await target.reply_text(get_text("no_people", language))
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
         return
 
     header = get_text("people_list_header", language).format(count=len(people))
@@ -180,6 +182,7 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await target.reply_text(chunk)
 
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
 
 
 def compose_start_message(language: str) -> str:
@@ -222,6 +225,22 @@ async def send_start_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
+async def send_main_menu_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: Optional[str] = None,
+) -> None:
+    if language is None:
+        language = await get_language(context, update.effective_user.id)
+    message = compose_start_message(language)
+    target = get_reply_target(update)
+    await target.reply_text(
+        message,
+        disable_web_page_preview=True,
+        reply_markup=main_menu_keyboard(language),
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     clear_workflow(context)
     await send_start_message(update, context)
@@ -244,6 +263,7 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         disable_web_page_preview=True,
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
 
 
 async def export_transactions_handler(
@@ -273,6 +293,7 @@ async def export_transactions_handler(
         LOGGER.exception("Failed to export transactions")
         await target.reply_text(get_text("export_error", language))
         clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
         return
 
     buffer.seek(0)
@@ -284,6 +305,7 @@ async def export_transactions_handler(
         caption=get_text("export_success", language),
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
 
 
 def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -309,6 +331,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             get_text("action_cancelled", language),
             reply_markup=None,
         )
+    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 
@@ -342,6 +365,7 @@ async def save_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         get_text("person_added", language).format(name=person.name, id=person.id),
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 
@@ -582,6 +606,7 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             description,
         )
         clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
         return ConversationHandler.END
 
     # Fallback for text-based confirmation
@@ -620,6 +645,7 @@ async def finalize_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "Debt recorded for person_id=%s amount=%s description=%s", person.id, amount, description
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 
@@ -711,6 +737,7 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             description,
         )
         clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
         return ConversationHandler.END
 
     text = update.message.text.strip().casefold()
@@ -748,6 +775,7 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "Payment recorded for person_id=%s amount=%s description=%s", person.id, amount, description
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 
@@ -786,6 +814,7 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if not history:
         await update.message.reply_text(get_text("history_empty", language))
         clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
         return ConversationHandler.END
 
     lines = [
@@ -807,6 +836,7 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=cancel_keyboard(language),
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 
@@ -903,6 +933,7 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         get_text("language_updated", matched_code).format(language=label),
     )
     clear_workflow(context)
+    await send_main_menu_reply(update, context, matched_code)
     return ConversationHandler.END
 
 

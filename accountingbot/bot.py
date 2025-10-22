@@ -768,8 +768,9 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---- Search ----
 async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
-    context.user_data["person_state"] = SEARCH_QUERY
-    context.user_data.pop("person_next_state", None)
+    has_pending_workflow = context.user_data.get("person_next_state") is not None
+    if not has_pending_workflow:
+        context.user_data["person_state"] = SEARCH_QUERY
     await answer_callback(update)
     target = get_reply_target(update)
     prompt = "\n".join(

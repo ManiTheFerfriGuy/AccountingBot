@@ -1,8 +1,11 @@
 """Keyboard helpers for AccountingBot."""
 from __future__ import annotations
 
+from typing import Sequence
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from .database import SearchResult
 from .localization import available_languages, get_text
 
 
@@ -126,4 +129,19 @@ def language_keyboard(language: str) -> InlineKeyboardMarkup:
     buttons.append(
         [InlineKeyboardButton(get_text("cancel", language), callback_data="workflow:cancel")]
     )
+    return InlineKeyboardMarkup(buttons)
+
+
+def search_results_keyboard(matches: Sequence[SearchResult]) -> InlineKeyboardMarkup:
+    """Inline keyboard listing the top person matches for quick selection."""
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                f"{match.person.name} (#{match.person.id})",
+                callback_data=f"select_person:{match.person.id}",
+            )
+        ]
+        for match in matches[:5]
+    ]
     return InlineKeyboardMarkup(buttons)

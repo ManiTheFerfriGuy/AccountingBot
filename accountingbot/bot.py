@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import logging
+import re
 import signal
 from datetime import datetime
 from html import escape
@@ -123,6 +124,21 @@ LANGUAGE_SELECTION = 50
 LOGGER = logging.getLogger(__name__)
 
 PERSON_MENU_PAGE_SIZE = 5
+
+MAIN_MENU_ACTIONS = (
+    "add_person",
+    "add_debt",
+    "pay_debt",
+    "history",
+    "dashboard",
+    "list_people",
+    "language",
+    "export",
+)
+
+MENU_CALLBACK_FALLBACK_PATTERN = re.compile(
+    rf"^menu:(?!(?:{'|'.join(MAIN_MENU_ACTIONS)})$).+$"
+)
 
 
 async def get_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
@@ -1299,7 +1315,11 @@ def register_handlers(application: Application) -> None:
         )
     )
 
-    application.add_handler(CallbackQueryHandler(send_start_message, pattern="^menu:.*$"))
+    application.add_handler(
+        CallbackQueryHandler(
+            send_start_message, pattern=MENU_CALLBACK_FALLBACK_PATTERN
+        )
+    )
     application.add_handler(MessageHandler(filters.COMMAND, unknown))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 

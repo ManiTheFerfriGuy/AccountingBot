@@ -182,3 +182,55 @@ def person_menu_keyboard(
     )
 
     return InlineKeyboardMarkup(buttons)
+
+
+def export_mode_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("export_type_all", language), callback_data="export:mode:all"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("export_type_debt", language), callback_data="export:mode:debt"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("export_type_payment", language),
+                    callback_data="export:mode:payment",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def export_contact_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("export_contacts_all", language),
+                    callback_data="export:contacts:all",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("export_contacts_specific", language),
+                    callback_data="export:contacts:choose",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )

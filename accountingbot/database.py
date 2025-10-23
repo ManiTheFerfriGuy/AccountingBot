@@ -597,11 +597,48 @@ class Database:
             row = await asyncio.to_thread(cursor.fetchone)
         return float(row[0] if row and row[0] is not None else 0.0)
 
-    async def export_transactions(self) -> Sequence[sqlite3.Row]:
+    async def export_transactions(
+        self,
+        *,
+        amount_filter: Optional[str] = None,
+        person_ids: Optional[Sequence[int]] = None,
+    ) -> Sequence[sqlite3.Row]:
+        """Return transactions ordered by date with optional filters."""
+
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if amount_filter == "debt":
+            conditions.append("t.amount > 0")
+        elif amount_filter == "payment":
+            conditions.append("t.amount < 0")
+
+        if person_ids:
+            placeholders = ",".join("?" for _ in person_ids)
+            conditions.append(f"t.person_id IN ({placeholders})")
+            params.extend(person_ids)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
                 conn.execute,
-                "SELECT * FROM transactions ORDER BY created_at DESC",
+                " ".join(
+                    [
+                        "SELECT",
+                        "    t.id,",
+                        "    t.person_id,",
+                        "    p.name AS person_name,",
+                        "    t.amount,",
+                        "    t.description,",
+                        "    t.created_at",
+                        "FROM transactions t",
+                        "JOIN people p ON p.id = t.person_id",
+                        where_clause,
+                        "ORDER BY t.created_at DESC, t.id DESC",
+                    ]
+                ),
+                tuple(params),
             )
             rows = await asyncio.to_thread(cursor.fetchall)
         return rows

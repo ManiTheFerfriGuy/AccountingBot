@@ -1115,12 +1115,14 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def build_application(config) -> Application:
-    application = (
-        ApplicationBuilder()
-        .token(config.token)
-        .rate_limiter(AIORateLimiter())
-        .build()
-    )
+    builder = ApplicationBuilder().token(config.token)
+    try:
+        rate_limiter = AIORateLimiter()
+    except RuntimeError as exc:  # pragma: no cover - depends on optional extras
+        LOGGER.warning("Rate limiter disabled: %s", exc)
+    else:
+        builder = builder.rate_limiter(rate_limiter)
+    application = builder.build()
     return application
 
 

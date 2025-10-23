@@ -21,7 +21,7 @@ _LANGUAGES = {
             "start_message": "Hello! I'm AccountingBot—your friendly, professional finance assistant.",
             "start_command_overview": "Pick what you'd like to do:",
             "start_search_hint": "Need someone quickly? Tap 🔍 Find a Record to search by name or ID.",
-            "start_cancel_hint": "Want to stop? Tap ✖️ Cancel at any time.",
+            "start_cancel_hint": "Want to stop? Send /cancel or tap ✖️ Cancel at any time.",
             "add_person": "➕ Add Contact",
             "add_debt": "🧾 Log a Charge",
             "pay_debt": "💳 Record a Payment",
@@ -34,7 +34,7 @@ _LANGUAGES = {
             "cancel": "✖️ Cancel",
             "prompt_person_identifier": "Who would you like to work with? Send their ID (for example 42 or #42) or a name to look up.",
             "person_id_hint": "If you typed a name, I’ll show matches—then send the exact ID you want.",
-            "enter_person_name": "Please share the person's full name. Tap Cancel if you change your mind.",
+            "enter_person_name": "Please share the person's full name.",
             "person_added": "{name} has been added successfully with ID #{id}.",
             "invalid_person_name": "That name looks empty. Please send a valid name.",
             "duplicate_person_name": '"{name}" is already on your list. Try a different name.',
@@ -99,6 +99,15 @@ _LANGUAGES = {
             "search_suggestions": "No direct matches. Perhaps you meant: {suggestions}?",
             "search_filters_hint": "Tip: Try filters such as \"balance>0\", \"debtors\", or enter an ID.",
             "language_prompt_codes": "Tap a button below or send a language code like EN.",
+            "quick_debt_prompt": "To add a charge, send the person's ID, the amount, and a short description in one message.",
+            "quick_debt_example": "Example: 42 150 Lunch with client",
+            "quick_payment_prompt": "To log a payment, send the person's ID, the amount, and a short description in one message.",
+            "quick_payment_example": "Example: #42 75 Refund for supplies",
+            "quick_entry_invalid_format": "Please send ID, amount, and description separated by spaces (for example: 42 150 Groceries).",
+            "quick_entry_invalid_id": "I couldn't read the ID. Use digits like 42 or #42.",
+            "quick_entry_invalid_amount": "The amount should be a positive number such as 12.50.",
+            "quick_entry_person_not_found": "I couldn't find anyone with that ID. Check the number and try again.",
+            "cancel_anytime": "Send /cancel at any time to stop.",
             "skip_optional": "Skip",
             "export_success": "Here is the latest transaction export.",
             "export_error": "I couldn't generate the export right now. Please try again later.",
@@ -110,7 +119,7 @@ _LANGUAGES = {
             "start_message": "سلام! من AccountingBot هستم، همراه مالی شما.",
             "start_command_overview": "از میان گزینه‌های زیر کاری را که می‌خواهید انجام دهید انتخاب کنید:",
             "start_search_hint": "به دنبال کسی هستید؟ روی 🔍 جستجو بزنید تا بر اساس نام یا شناسه پیدا کنم.",
-            "start_cancel_hint": "می‌خواهید توقف کنید؟ هر زمان خواستید روی ✖️ انصراف بزنید.",
+            "start_cancel_hint": "می‌خواهید توقف کنید؟ هر زمان خواستید ‎/cancel را بفرستید یا روی ✖️ انصراف بزنید.",
             "add_person": "➕ افزودن مخاطب",
             "add_debt": "🧾 ثبت بدهی",
             "pay_debt": "💳 ثبت پرداخت",
@@ -123,7 +132,7 @@ _LANGUAGES = {
             "cancel": "✖️ انصراف",
             "prompt_person_identifier": "می‌خواهید با چه کسی کار کنید؟ شناسه او را (مثلاً 42 یا ‎#42) بفرستید یا نامش را بنویسید تا جستجو کنم.",
             "person_id_hint": "اگر نام ارسال کنید، نتایج را نشان می‌دهم—سپس شناسه دقیق موردنظر را بفرستید.",
-            "enter_person_name": "لطفاً نام کامل شخص را ارسال کنید. در صورت انصراف دکمه انصراف را بزنید.",
+            "enter_person_name": "لطفاً نام کامل شخص را ارسال کنید.",
             "person_added": "{name} با شناسه #{id} با موفقیت افزوده شد.",
             "invalid_person_name": "نام ارسال‌شده خالی است. لطفاً نام معتبری وارد کنید.",
             "duplicate_person_name": '«{name}» قبلاً ثبت شده است. نام دیگری را امتحان کنید.',
@@ -152,8 +161,8 @@ _LANGUAGES = {
             "history_item_debt": "➕ {amount:.2f} — {description} ({date})",
             "history_item_payment": "➖ {amount:.2f} — {description} ({date})",
             "history_empty": "هنوز تراکنشی ثبت نشده است.",
-            "prompt_date_range": "بازه تاریخ را به صورت YYYY-MM-DD,YYYY-MM-DD ارسال کنید یا برای نمایش همه /skip را بنویسید.",
-            "invalid_date_range": "بازه تاریخ نامعتبر است. لطفاً از قالب YYYY-MM-DD,YYYY-MM-DD یا دستور /skip استفاده کنید.",
+            "prompt_date_range": "بازه تاریخ را به صورت YYYY-MM-DD,YYYY-MM-DD ارسال کنید یا برای نمایش همه ‎/skip را بنویسید.",
+            "invalid_date_range": "بازه تاریخ نامعتبر است. لطفاً از قالب YYYY-MM-DD,YYYY-MM-DD یا دستور ‎/skip استفاده کنید.",
             "language_prompt": "لطفاً زبان مورد نظرتان را انتخاب کنید.",
             "language_updated": "عالی! از این پس به {language} ادامه می‌دهم.",
             "search_prompt": "نام یا شناسه‌ای را که می‌خواهید جستجو کنم ارسال کنید.",
@@ -188,6 +197,15 @@ _LANGUAGES = {
             "search_suggestions": "نتیجه مستقیمی نبود. شاید منظور شما این گزینه‌هاست: {suggestions}؟",
             "search_filters_hint": "نکته: می‌توانید از فیلترهایی مانند «balance>0»، «debtors» یا وارد کردن شناسه استفاده کنید.",
             "language_prompt_codes": "از دکمه‌های زیر استفاده کنید یا کد زبان (مثلاً FA) را بفرستید.",
+            "quick_debt_prompt": "برای ثبت بدهی، شناسه شخص، مبلغ و توضیح کوتاه را در یک پیام بفرستید.",
+            "quick_debt_example": "مثال: 42 150 کرایه تاکسی",
+            "quick_payment_prompt": "برای ثبت پرداخت، شناسه شخص، مبلغ و توضیح کوتاه را در یک پیام بنویسید.",
+            "quick_payment_example": "مثال: #42 75 بازپرداخت خرید",
+            "quick_entry_invalid_format": "لطفاً شناسه، مبلغ و توضیح را با فاصله در یک پیام بفرستید (مثلاً: 42 150 خرید).",
+            "quick_entry_invalid_id": "شناسه را متوجه نشدم. از عددی مثل 42 یا ‎#42 استفاده کنید.",
+            "quick_entry_invalid_amount": "مبلغ باید یک عدد مثبت باشد؛ مثلاً 12.5.",
+            "quick_entry_person_not_found": "فردی با این شناسه پیدا نشد. لطفاً شماره را بررسی کنید.",
+            "cancel_anytime": "برای انصراف هر زمان خواستید ‎/cancel را بفرستید.",
             "skip_optional": "رد کردن",
             "export_success": "این هم خروجی تازه‌ی تراکنش‌ها.",
             "export_error": "متأسفم، الان نتوانستم خروجی بسازم. لطفاً کمی بعد دوباره امتحان کنید.",

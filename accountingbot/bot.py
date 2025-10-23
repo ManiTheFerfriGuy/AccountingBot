@@ -9,7 +9,7 @@ import signal
 from datetime import datetime
 from html import escape
 from io import BytesIO, StringIO
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Tuple
 
 from telegram import Update, constants
 from telegram.ext import (
@@ -45,28 +45,96 @@ from .keyboards import (
 from .localization import available_languages, get_text
 
 # Patched ConversationHandler support for per-message tracking with message updates
+_WORKFLOW_PROMPT_KEY = "_workflow_prompt_key"
+_WORKFLOW_PROMPT_MESSAGE_IDS: dict[Tuple[int, ...], int] = {}
+
+
+def _conversation_base_key(
+    update: Update, per_chat: bool, per_user: bool
+) -> Tuple[Any, ...]:
+    chat = update.effective_chat
+    user = update.effective_user
+    parts: list[Any] = []
+    if per_chat:
+        if chat is None:
+            raise RuntimeError("Can't build key for update without effective chat!")
+        parts.append(chat.id)
+    if per_user:
+        if user is None:
+            raise RuntimeError("Can't build key for update without effective user!")
+        parts.append(user.id)
+    return tuple(parts)
+
+
 if not hasattr(ConversationHandler, "_accountingbot_per_message_patch"):
     _original_get_key = ConversationHandler._get_key
 
     def _accountingbot_get_key(self: ConversationHandler, update: Update):
-        if self.per_message and update.callback_query is None and update.message:
-            chat = update.effective_chat
-            user = update.effective_user
-            key = []
-            if self.per_chat:
-                if chat is None:
-                    raise RuntimeError("Can't build key for update without effective chat!")
-                key.append(chat.id)
-            if self.per_user:
-                if user is None:
-                    raise RuntimeError("Can't build key for update without effective user!")
-                key.append(user.id)
-            key.append(update.message.message_id)
-            return tuple(key)
+        if self.per_message:
+            base_parts = _conversation_base_key(update, self.per_chat, self.per_user)
+            stored_message_id = _WORKFLOW_PROMPT_MESSAGE_IDS.get(base_parts)
+            if stored_message_id is not None:
+                conversation_key = (*base_parts, stored_message_id)
+                if (
+                    conversation_key not in self._conversations
+                    and base_parts
+                    and self._conversations
+                ):
+                    for existing_key in list(self._conversations.keys()):
+                        if (
+                            isinstance(existing_key, tuple)
+                            and len(existing_key) == len(base_parts) + 1
+                            and existing_key[:-1] == base_parts
+                        ):
+                            self._conversations[conversation_key] = self._conversations.pop(
+                                existing_key
+                            )
+                            break
+                return conversation_key
+
+            if update.callback_query is None and update.message:
+                key = list(base_parts)
+                key.append(update.message.message_id)
+                if base_parts:
+                    _WORKFLOW_PROMPT_MESSAGE_IDS[base_parts] = update.message.message_id
+                return tuple(key)
+
+            if update.callback_query:
+                key = list(base_parts)
+                query = update.callback_query
+                if query.inline_message_id:
+                    key.append(query.inline_message_id)
+                elif query.message:
+                    key.append(query.message.message_id)
+                    if base_parts:
+                        _WORKFLOW_PROMPT_MESSAGE_IDS[base_parts] = query.message.message_id
+                return tuple(key)
+
         return _original_get_key(self, update)
 
     ConversationHandler._get_key = _accountingbot_get_key  # type: ignore[assignment]
     ConversationHandler._accountingbot_per_message_patch = True
+
+else:
+    _WORKFLOW_PROMPT_KEY = "_workflow_prompt_key"
+
+
+def _remember_prompt_message(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: Optional[int]
+) -> None:
+    if message_id is None:
+        return
+    base_key = _conversation_base_key(update, True, True)
+    if not base_key:
+        return
+    _WORKFLOW_PROMPT_MESSAGE_IDS[base_key] = message_id
+    context.user_data[_WORKFLOW_PROMPT_KEY] = base_key
+
+
+def _drop_prompt_message(context: ContextTypes.DEFAULT_TYPE) -> None:
+    base_key = context.user_data.pop(_WORKFLOW_PROMPT_KEY, None)
+    if base_key is not None:
+        _WORKFLOW_PROMPT_MESSAGE_IDS.pop(base_key, None)
 
 
 class _CallbackHandlerWrapper(CallbackQueryHandler):
@@ -425,6 +493,7 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "person_menu_page",
     ):
         context.user_data.pop(key, None)
+    _drop_prompt_message(context)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -447,10 +516,11 @@ async def prompt_person_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     clear_workflow(context)
     await answer_callback(update)
     target = get_reply_target(update)
-    await target.reply_text(
+    message = await target.reply_text(
         with_cancel_hint(get_text("enter_person_name", language), language),
         reply_markup=cancel_keyboard(language),
     )
+    _remember_prompt_message(update, context, getattr(message, "message_id", None))
     return ADD_PERSON_NAME
 
 
@@ -483,10 +553,11 @@ async def prompt_person_selection(
     context.user_data.pop("entry_mode", None)
     await answer_callback(update)
     target = get_reply_target(update)
-    await target.reply_text(
+    message = await target.reply_text(
         with_cancel_hint(get_text("choose_selection_method", language), language),
         reply_markup=selection_method_keyboard(language),
     )
+    _remember_prompt_message(update, context, getattr(message, "message_id", None))
     return context.user_data.get("person_state", ConversationHandler.END)
 
 
@@ -1060,10 +1131,11 @@ async def start_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     language = await get_language(context, update.effective_user.id)
     await answer_callback(update)
     target = get_reply_target(update)
-    await target.reply_text(
+    message = await target.reply_text(
         with_cancel_hint(get_text("language_prompt", language), language),
         reply_markup=language_keyboard(language),
     )
+    _remember_prompt_message(update, context, getattr(message, "message_id", None))
     return LANGUAGE_SELECTION
 
 
@@ -1089,10 +1161,11 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if not matched_code:
         language = await get_language(context, update.effective_user.id)
-        await target.reply_text(
+        message = await target.reply_text(
             with_cancel_hint(get_text("language_prompt_codes", language), language),
             reply_markup=language_keyboard(language),
         )
+        _remember_prompt_message(update, context, getattr(message, "message_id", None))
         return LANGUAGE_SELECTION
 
     db: Database = context.bot_data["db"]
@@ -1159,7 +1232,6 @@ def register_handlers(application: Application) -> None:
         ),
         name="add_person",
         persistent=False,
-        per_message=True,
     )
     application.add_handler(add_person_conv)
 
@@ -1190,7 +1262,6 @@ def register_handlers(application: Application) -> None:
             ]
         ),
         name="add_debt",
-        per_message=True,
     )
     application.add_handler(add_debt_conv)
 
@@ -1221,7 +1292,6 @@ def register_handlers(application: Application) -> None:
             ]
         ),
         name="payment",
-        per_message=True,
     )
     application.add_handler(payment_conv)
 
@@ -1258,7 +1328,6 @@ def register_handlers(application: Application) -> None:
             ]
         ),
         name="history",
-        per_message=True,
     )
     application.add_handler(history_conv)
 
@@ -1285,7 +1354,6 @@ def register_handlers(application: Application) -> None:
                 ]
             ),
             name="search",
-            per_message=True,
         )
     )
 
@@ -1313,7 +1381,6 @@ def register_handlers(application: Application) -> None:
                 ]
             ),
             name="language",
-            per_message=True,
         )
     )
 

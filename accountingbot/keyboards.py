@@ -5,7 +5,7 @@ from typing import Sequence
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .database import SearchResult
+from .database import PersonUsageStats, SearchResult
 from .localization import available_languages, get_text
 
 
@@ -35,18 +35,13 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
                     get_text("dashboard", language), callback_data="menu:dashboard"
                 ),
                 InlineKeyboardButton(
-                    get_text("search", language), callback_data="menu:search"
+                    get_text("list_people", language), callback_data="menu:list_people"
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    get_text("list_people", language), callback_data="menu:list_people"
-                ),
                 InlineKeyboardButton(
                     get_text("language", language), callback_data="menu:language"
                 ),
-            ],
-            [
                 InlineKeyboardButton(
                     get_text("export_transactions", language),
                     callback_data="menu:export",
@@ -144,4 +139,46 @@ def search_results_keyboard(matches: Sequence[SearchResult]) -> InlineKeyboardMa
         ]
         for match in matches[:5]
     ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def person_menu_keyboard(
+    people: Sequence[PersonUsageStats],
+    language: str,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                f"{entry.person.name} (#{entry.person.id})",
+                callback_data=f"select_person:{entry.person.id}",
+            )
+        ]
+        for entry in people
+    ]
+
+    if total_pages > 1:
+        nav_buttons: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    get_text("previous_page", language),
+                    callback_data=f"person_page:{page - 1}",
+                )
+            )
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    get_text("next_page", language),
+                    callback_data=f"person_page:{page + 1}",
+                )
+            )
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
+    buttons.append(
+        [InlineKeyboardButton(get_text("cancel", language), callback_data="workflow:cancel")]
+    )
+
     return InlineKeyboardMarkup(buttons)

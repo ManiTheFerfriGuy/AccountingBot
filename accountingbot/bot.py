@@ -8,13 +8,14 @@ import signal
 from datetime import datetime
 from html import escape
 from io import BytesIO, StringIO
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 from telegram import Update, constants
 from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    BaseHandler,
     CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
@@ -39,6 +40,75 @@ from .keyboards import (
     search_results_keyboard,
 )
 from .localization import available_languages, get_text
+
+# Patched ConversationHandler support for per-message tracking with message updates
+if not hasattr(ConversationHandler, "_accountingbot_per_message_patch"):
+    _original_get_key = ConversationHandler._get_key
+
+    def _accountingbot_get_key(self: ConversationHandler, update: Update):
+        if self.per_message and update.callback_query is None and update.message:
+            chat = update.effective_chat
+            user = update.effective_user
+            key = []
+            if self.per_chat:
+                if chat is None:
+                    raise RuntimeError("Can't build key for update without effective chat!")
+                key.append(chat.id)
+            if self.per_user:
+                if user is None:
+                    raise RuntimeError("Can't build key for update without effective user!")
+                key.append(user.id)
+            key.append(update.message.message_id)
+            return tuple(key)
+        return _original_get_key(self, update)
+
+    ConversationHandler._get_key = _accountingbot_get_key  # type: ignore[assignment]
+    ConversationHandler._accountingbot_per_message_patch = True
+
+
+class _CallbackHandlerWrapper(CallbackQueryHandler):
+    __slots__ = ("_inner",)
+
+    def __init__(self, handler: BaseHandler[Update, ContextTypes.DEFAULT_TYPE]):
+        self._inner = handler
+        super().__init__(handler.callback, block=handler.block)
+
+    def check_update(self, update: object):
+        return self._inner.check_update(update)
+
+    async def handle_update(
+        self,
+        update: Update,
+        application: Application,
+        check_result: object,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> Any:
+        return await self._inner.handle_update(update, application, check_result, context)
+
+    def collect_additional_context(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        update: Update,
+        application: Application,
+        check_result: object,
+    ) -> None:
+        self._inner.collect_additional_context(context, update, application, check_result)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+
+def _wrap_handlers(handlers: Iterable[BaseHandler[Update, ContextTypes.DEFAULT_TYPE]]):
+    wrapped = []
+    for handler in handlers:
+        if isinstance(handler, CallbackQueryHandler):
+            wrapped.append(handler)
+        elif isinstance(handler, _CallbackHandlerWrapper):
+            wrapped.append(handler)
+        else:
+            wrapped.append(_CallbackHandlerWrapper(handler))
+    return wrapped
+
 
 # Conversation states
 ADD_PERSON_NAME = 1
@@ -840,126 +910,170 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
 
     add_person_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add_person", prompt_person_name),
-            CallbackQueryHandler(prompt_person_name, pattern="^menu:add_person$"),
-        ],
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("add_person", prompt_person_name),
+                CallbackQueryHandler(prompt_person_name, pattern="^menu:add_person$"),
+            ]
+        ),
         states={
-            ADD_PERSON_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
+            ADD_PERSON_NAME: _wrap_handlers(
+                [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_person_name),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-        ],
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
         name="add_person",
         persistent=False,
+        per_message=True,
     )
     application.add_handler(add_person_conv)
 
     add_debt_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add_debt", start_add_debt),
-            CallbackQueryHandler(start_add_debt, pattern="^menu:add_debt$"),
-        ],
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("add_debt", start_add_debt),
+                CallbackQueryHandler(start_add_debt, pattern="^menu:add_debt$"),
+            ]
+        ),
         states={
-            DEBT_ENTRY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debt_entry),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
+            DEBT_ENTRY: _wrap_handlers(
+                [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debt_entry),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-        ],
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
         name="add_debt",
+        per_message=True,
     )
     application.add_handler(add_debt_conv)
 
     payment_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("record_payment", start_payment),
-            CallbackQueryHandler(start_payment, pattern="^menu:pay_debt$"),
-        ],
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("record_payment", start_payment),
+                CallbackQueryHandler(start_payment, pattern="^menu:pay_debt$"),
+            ]
+        ),
         states={
-            PAYMENT_ENTRY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_entry),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
+            PAYMENT_ENTRY: _wrap_handlers(
+                [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_entry),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-        ],
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
         name="payment",
+        per_message=True,
     )
     application.add_handler(payment_conv)
 
     history_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("history", start_history),
-            CallbackQueryHandler(start_history, pattern="^menu:history$"),
-        ],
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("history", start_history),
+                CallbackQueryHandler(start_history, pattern="^menu:history$"),
+            ]
+        ),
         states={
-            HISTORY_PERSON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
-                CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
-            HISTORY_DATES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
-                CommandHandler("skip", fetch_history),
-            ],
+            HISTORY_PERSON: _wrap_handlers(
+                [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            HISTORY_DATES: _wrap_handlers(
+                [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
+                    CommandHandler("skip", fetch_history),
+                ]
+            ),
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-        ],
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
         name="history",
+        per_message=True,
     )
     application.add_handler(history_conv)
 
     application.add_handler(
         ConversationHandler(
-            entry_points=[
-                CommandHandler("search", start_search),
-                CallbackQueryHandler(start_search, pattern="^menu:search$"),
-            ],
+            entry_points=_wrap_handlers(
+                [
+                    CommandHandler("search", start_search),
+                    CallbackQueryHandler(start_search, pattern="^menu:search$"),
+                ]
+            ),
             states={
-                SEARCH_QUERY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
-                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
-                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-                ],
+                SEARCH_QUERY: _wrap_handlers(
+                    [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, search_people),
+                        CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                        CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                    ]
+                ),
             },
-            fallbacks=[
-                CommandHandler("cancel", cancel),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
+            fallbacks=_wrap_handlers(
+                [
+                    CommandHandler("cancel", cancel),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
             name="search",
+            per_message=True,
         )
     )
 
     application.add_handler(
         ConversationHandler(
-            entry_points=[
-                CommandHandler("language", start_language),
-                CallbackQueryHandler(start_language, pattern="^menu:language$"),
-            ],
+            entry_points=_wrap_handlers(
+                [
+                    CommandHandler("language", start_language),
+                    CallbackQueryHandler(start_language, pattern="^menu:language$"),
+                ]
+            ),
             states={
-                LANGUAGE_SELECTION: [
-                    CallbackQueryHandler(change_language, pattern="^lang:"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, change_language),
+                LANGUAGE_SELECTION: _wrap_handlers(
+                    [
+                        CallbackQueryHandler(change_language, pattern="^lang:"),
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, change_language),
+                        CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                    ]
+                )
+            },
+            fallbacks=_wrap_handlers(
+                [
+                    CommandHandler("cancel", cancel),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
-            },
-            fallbacks=[
-                CommandHandler("cancel", cancel),
-                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
-            ],
+            ),
             name="language",
+            per_message=True,
         )
     )
 

@@ -61,6 +61,15 @@ class SearchResponse:
 
 
 @dataclass(slots=True)
+class PersonUsageStats:
+    """Represents a person along with usage statistics."""
+
+    person: Person
+    usage_count: int
+    balance: float
+
+
+@dataclass(slots=True)
 class DashboardTotals:
     """Aggregated totals used on the dashboard screen."""
 
@@ -393,6 +402,58 @@ class Database:
             )
             for row in rows
         ]
+
+    async def list_people_with_usage(self) -> List[PersonUsageStats]:
+        async with self._connection() as conn:
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                    SELECT
+                        p.id,
+                        p.name,
+                        p.created_at,
+                        COUNT(t.id) AS usage_count,
+                        COALESCE(SUM(t.amount), 0) AS balance
+                    FROM people p
+                    LEFT JOIN transactions t ON t.person_id = p.id
+                    GROUP BY p.id
+                """,
+            )
+            rows = await asyncio.to_thread(cursor.fetchall)
+
+        stats = [
+            PersonUsageStats(
+                person=Person(
+                    id=row["id"],
+                    name=row["name"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                ),
+                usage_count=int(row["usage_count"] or 0),
+                balance=float(row["balance"] or 0.0),
+            )
+            for row in rows
+        ]
+
+        max_usage = max((entry.usage_count for entry in stats), default=0)
+        if max_usage > 0:
+            stats.sort(
+                key=lambda entry: (
+                    -entry.usage_count,
+                    -abs(entry.balance),
+                    entry.person.name.casefold(),
+                    entry.person.id,
+                )
+            )
+        else:
+            stats.sort(
+                key=lambda entry: (
+                    -abs(entry.balance),
+                    entry.person.name.casefold(),
+                    entry.person.id,
+                )
+            )
+
+        return stats
 
     async def add_transaction(
         self, person_id: int, amount: float, description: str = ""

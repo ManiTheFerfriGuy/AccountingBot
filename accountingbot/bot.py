@@ -37,7 +37,9 @@ from .keyboards import (
     cancel_keyboard,
     language_keyboard,
     main_menu_keyboard,
+    person_menu_keyboard,
     search_results_keyboard,
+    selection_method_keyboard,
 )
 from .localization import available_languages, get_text
 
@@ -119,6 +121,8 @@ SEARCH_QUERY = 40
 LANGUAGE_SELECTION = 50
 
 LOGGER = logging.getLogger(__name__)
+
+PERSON_MENU_PAGE_SIZE = 5
 
 
 async def get_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
@@ -272,7 +276,6 @@ def compose_start_message(language: str) -> str:
         get_text("pay_debt", language),
         get_text("history", language),
         get_text("dashboard", language),
-        get_text("search", language),
         get_text("list_people", language),
         get_text("export_transactions", language),
         get_text("language", language),
@@ -393,6 +396,8 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "description",
         "person_state",
         "person_next_state",
+        "entry_mode",
+        "person_menu_page",
     ):
         context.user_data.pop(key, None)
 
@@ -450,19 +455,12 @@ async def prompt_person_selection(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     language = await get_language(context, update.effective_user.id)
+    context.user_data.pop("entry_mode", None)
     await answer_callback(update)
     target = get_reply_target(update)
     await target.reply_text(
-        with_cancel_hint(
-            "\n".join(
-                [
-                    get_text("prompt_person_identifier", language),
-                    get_text("person_id_hint", language),
-                ]
-            ),
-            language,
-        ),
-        reply_markup=cancel_keyboard(language),
+        with_cancel_hint(get_text("choose_selection_method", language), language),
+        reply_markup=selection_method_keyboard(language),
     )
     return context.user_data.get("person_state", ConversationHandler.END)
 
@@ -476,6 +474,28 @@ async def advance_person_workflow(
     context.user_data["person"] = person
     target = get_reply_target(update)
     next_state = context.user_data.get("person_next_state", ConversationHandler.END)
+    flow = context.user_data.get("flow")
+    entry_mode = context.user_data.get("entry_mode")
+
+    if flow == "debt" and entry_mode == "menu":
+        await target.reply_text(
+            with_cancel_hint(
+                get_text("menu_enter_debt_details", language).format(name=person.name),
+                language,
+            ),
+            reply_markup=cancel_keyboard(language),
+        )
+        return DEBT_ENTRY
+
+    if flow == "payment" and entry_mode == "menu":
+        await target.reply_text(
+            with_cancel_hint(
+                get_text("menu_enter_payment_details", language).format(name=person.name),
+                language,
+            ),
+            reply_markup=cancel_keyboard(language),
+        )
+        return PAYMENT_ENTRY
 
     if next_state == HISTORY_DATES:
         await target.reply_text(
@@ -488,6 +508,121 @@ async def advance_person_workflow(
     return ConversationHandler.END
 
 
+async def show_person_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    page: int = 0,
+) -> int:
+    db: Database = context.bot_data["db"]
+    people = await db.list_people_with_usage()
+    if not people:
+        target = get_reply_target(update)
+        await target.reply_text(
+            with_cancel_hint(get_text("no_people", language), language),
+            reply_markup=cancel_keyboard(language),
+        )
+        context.user_data.pop("entry_mode", None)
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    total = len(people)
+    total_pages = max(1, (total + PERSON_MENU_PAGE_SIZE - 1) // PERSON_MENU_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * PERSON_MENU_PAGE_SIZE
+    end = start + PERSON_MENU_PAGE_SIZE
+    current_slice = people[start:end]
+
+    message = with_cancel_hint(
+        get_text("menu_prompt", language).format(page=f"{page + 1}/{total_pages}"),
+        language,
+    )
+    keyboard = person_menu_keyboard(current_slice, language, page, total_pages)
+
+    query = update.callback_query
+    if query and query.message:
+        await query.message.edit_text(message, reply_markup=keyboard)
+    else:
+        target = get_reply_target(update)
+        await target.reply_text(message, reply_markup=keyboard)
+
+    context.user_data["person_menu_page"] = page
+    return context.user_data.get("person_state", ConversationHandler.END)
+
+
+async def handle_selection_method(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    payload = query.data.split(":", 1)
+    if len(payload) != 2:
+        await query.answer()
+        return state
+    method = payload[1]
+    flow = context.user_data.get("flow")
+    state = context.user_data.get("person_state", ConversationHandler.END)
+
+    if method == "id":
+        context.user_data["entry_mode"] = "id"
+        context.user_data.pop("person", None)
+        context.user_data.pop("person_menu_page", None)
+        if flow == "debt":
+            message = "\n".join(
+                [
+                    get_text("quick_debt_prompt", language),
+                    get_text("quick_debt_example", language),
+                ]
+            )
+        elif flow == "payment":
+            message = "\n".join(
+                [
+                    get_text("quick_payment_prompt", language),
+                    get_text("quick_payment_example", language),
+                ]
+            )
+        else:
+            message = get_text("prompt_person_id", language)
+        await query.answer()
+        if query.message:
+            await query.message.edit_text(
+                with_cancel_hint(message, language),
+                reply_markup=cancel_keyboard(language),
+            )
+        return state
+
+    if method == "menu":
+        context.user_data["entry_mode"] = "menu"
+        context.user_data.pop("person", None)
+        context.user_data.pop("person_menu_page", None)
+        await query.answer()
+        return await show_person_menu(update, context, language, page=0)
+
+    await query.answer()
+    return state
+
+
+async def handle_person_menu_navigation(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    try:
+        _, page_str = query.data.split(":", 1)
+        page = int(page_str)
+    except (ValueError, IndexError):
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    await query.answer()
+    return await show_person_menu(update, context, language, page)
+
+
 async def receive_person_reference(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -497,7 +632,8 @@ async def receive_person_reference(
     state = context.user_data.get("person_state", ConversationHandler.END)
     if not text:
         await update.message.reply_text(
-            with_cancel_hint(get_text("person_id_hint", language), language)
+            with_cancel_hint(get_text("person_id_or_menu_hint", language), language),
+            reply_markup=cancel_keyboard(language),
         )
         return state
 
@@ -508,25 +644,13 @@ async def receive_person_reference(
         if not person:
             await update.message.reply_text(get_text("not_found", language))
             await update.message.reply_text(
-                with_cancel_hint(get_text("person_id_hint", language), language),
+                with_cancel_hint(get_text("person_id_or_menu_hint", language), language),
                 reply_markup=cancel_keyboard(language),
             )
             return state
     else:
-        response = await db.search_people(text)
-        if response.matches:
-            formatted = format_search_results(language, response)
-            keyboard = search_results_keyboard(response.matches)
-            await update.message.reply_text(formatted, reply_markup=keyboard)
-        else:
-            message = get_text("not_found", language)
-            if response.suggestions:
-                message = get_text("search_suggestions", language).format(
-                    suggestions=", ".join(response.suggestions)
-                )
-            await update.message.reply_text(message)
         await update.message.reply_text(
-            with_cancel_hint(get_text("person_id_hint", language), language),
+            with_cancel_hint(get_text("person_id_or_menu_hint", language), language),
             reply_markup=cancel_keyboard(language),
         )
         return state
@@ -548,7 +672,7 @@ async def _handle_person_selection_failure(
         return SEARCH_QUERY
     if state != ConversationHandler.END:
         await target.reply_text(
-            with_cancel_hint(get_text("person_id_hint", language), language),
+            with_cancel_hint(get_text("person_id_or_menu_hint", language), language),
             reply_markup=cancel_keyboard(language),
         )
     return state
@@ -583,25 +707,61 @@ async def handle_person_selection(
 async def start_add_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     clear_workflow(context)
     context.user_data["flow"] = "debt"
-    language = await get_language(context, update.effective_user.id)
-    await answer_callback(update)
-    target = get_reply_target(update)
-    message = "\n".join(
-        [
-            get_text("quick_debt_prompt", language),
-            get_text("quick_debt_example", language),
-        ]
-    )
-    await target.reply_text(
-        with_cancel_hint(message, language),
-        reply_markup=cancel_keyboard(language),
-    )
-    return DEBT_ENTRY
+    context.user_data["person_state"] = DEBT_ENTRY
+    return await prompt_person_selection(update, context)
 
 
 async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
+    entry_mode = context.user_data.get("entry_mode")
+    selected_person: Optional[Person] = context.user_data.get("person")
+
+    if entry_mode == "menu" and selected_person:
+        parts = text.split(None, 1)
+        if not parts:
+            await update.message.reply_text(
+                with_cancel_hint(
+                    get_text("menu_enter_debt_details", language).format(
+                        name=selected_person.name
+                    ),
+                    language,
+                ),
+                reply_markup=cancel_keyboard(language),
+            )
+            return DEBT_ENTRY
+
+        raw_amount = parts[0]
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
+            )
+            return DEBT_ENTRY
+
+        description = parts[1].strip() if len(parts) > 1 else ""
+
+        db: Database = context.bot_data["db"]
+        await db.add_transaction(selected_person.id, amount, description)
+        balance = await db.get_balance(selected_person.id)
+        await update.message.reply_text(
+            get_text("debt_recorded", language).format(
+                name=selected_person.name, amount=amount, balance=balance
+            )
+        )
+        LOGGER.info(
+            "Debt recorded for person_id=%s amount=%s description=%s",
+            selected_person.id,
+            amount,
+            description,
+        )
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
     parts = text.split(None, 2)
     if len(parts) < 3:
         await update.message.reply_text(
@@ -657,25 +817,62 @@ async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     clear_workflow(context)
     context.user_data["flow"] = "payment"
-    language = await get_language(context, update.effective_user.id)
-    await answer_callback(update)
-    target = get_reply_target(update)
-    message = "\n".join(
-        [
-            get_text("quick_payment_prompt", language),
-            get_text("quick_payment_example", language),
-        ]
-    )
-    await target.reply_text(
-        with_cancel_hint(message, language),
-        reply_markup=cancel_keyboard(language),
-    )
-    return PAYMENT_ENTRY
+    context.user_data["person_state"] = PAYMENT_ENTRY
+    return await prompt_person_selection(update, context)
 
 
 async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
+    entry_mode = context.user_data.get("entry_mode")
+    selected_person: Optional[Person] = context.user_data.get("person")
+
+    if entry_mode == "menu" and selected_person:
+        parts = text.split(None, 1)
+        if not parts:
+            await update.message.reply_text(
+                with_cancel_hint(
+                    get_text("menu_enter_payment_details", language).format(
+                        name=selected_person.name
+                    ),
+                    language,
+                ),
+                reply_markup=cancel_keyboard(language),
+            )
+            return PAYMENT_ENTRY
+
+        raw_amount = parts[0]
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
+            )
+            return PAYMENT_ENTRY
+
+        description = parts[1].strip() if len(parts) > 1 else ""
+
+        db: Database = context.bot_data["db"]
+        stored_amount = -abs(amount)
+        await db.add_transaction(selected_person.id, stored_amount, description)
+        balance = await db.get_balance(selected_person.id)
+        await update.message.reply_text(
+            get_text("payment_recorded", language).format(
+                name=selected_person.name, balance=balance
+            )
+        )
+        LOGGER.info(
+            "Payment recorded for person_id=%s amount=%s description=%s",
+            selected_person.id,
+            stored_amount,
+            description,
+        )
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
     parts = text.split(None, 2)
     if len(parts) < 3:
         await update.message.reply_text(
@@ -947,6 +1144,11 @@ def register_handlers(application: Application) -> None:
             DEBT_ENTRY: _wrap_handlers(
                 [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debt_entry),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             ),
@@ -973,6 +1175,11 @@ def register_handlers(application: Application) -> None:
             PAYMENT_ENTRY: _wrap_handlers(
                 [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_payment_entry),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             ),
@@ -999,6 +1206,10 @@ def register_handlers(application: Application) -> None:
             HISTORY_PERSON: _wrap_handlers(
                 [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_reference),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
@@ -1026,7 +1237,6 @@ def register_handlers(application: Application) -> None:
             entry_points=_wrap_handlers(
                 [
                     CommandHandler("search", start_search),
-                    CallbackQueryHandler(start_search, pattern="^menu:search$"),
                 ]
             ),
             states={

@@ -9,7 +9,7 @@ import signal
 from datetime import datetime
 from html import escape
 from io import BytesIO, StringIO
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Sequence, Tuple
 
 from telegram import Update, constants
 from telegram.ext import (
@@ -36,6 +36,8 @@ from .database import (
 )
 from .keyboards import (
     cancel_keyboard,
+    export_contact_keyboard,
+    export_mode_keyboard,
     language_keyboard,
     main_menu_keyboard,
     person_menu_keyboard,
@@ -188,6 +190,7 @@ PAYMENT_ENTRY = 20
 HISTORY_PERSON, HISTORY_DATES = range(30, 32)
 SEARCH_QUERY = 40
 LANGUAGE_SELECTION = 50
+EXPORT_MODE, EXPORT_CONTACT_CHOICE, EXPORT_PERSON = range(60, 63)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -430,46 +433,179 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await send_main_menu_reply(update, context, language)
 
 
-async def export_transactions_handler(
+async def start_export_transactions(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+) -> int:
     language = await get_language(context, update.effective_user.id)
+    clear_workflow(context)
+    context.user_data["flow"] = "export"
+    context.user_data["export_mode"] = "all"
     await answer_callback(update)
     target = get_reply_target(update)
+    message = await target.reply_text(
+        with_cancel_hint(get_text("export_choose_type", language), language),
+        reply_markup=export_mode_keyboard(language),
+    )
+    _remember_prompt_message(update, context, getattr(message, "message_id", None))
+    return EXPORT_MODE
+
+
+async def handle_export_mode(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return EXPORT_MODE
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        await query.answer()
+        return EXPORT_MODE
+
+    mode = parts[2]
+    context.user_data["export_mode"] = mode
+    await query.answer()
+
+    prompt = get_text("export_choose_contacts", language)
+    if query.message:
+        await query.message.edit_text(
+            with_cancel_hint(prompt, language),
+            reply_markup=export_contact_keyboard(language),
+        )
+    return EXPORT_CONTACT_CHOICE
+
+
+async def handle_export_contact_choice(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return EXPORT_CONTACT_CHOICE
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        await query.answer()
+        return EXPORT_CONTACT_CHOICE
+
+    choice = parts[2]
+    await query.answer()
+
+    if query.message:
+        await query.message.edit_reply_markup(reply_markup=None)
+
+    if choice == "all":
+        return await perform_export(update, context, language, person_ids=None)
+
+    if choice == "choose":
+        context.user_data["person_state"] = EXPORT_PERSON
+        context.user_data.pop("person_next_state", None)
+        context.user_data.pop("entry_mode", None)
+        return await prompt_person_selection(update, context)
+
+    return EXPORT_CONTACT_CHOICE
+
+
+async def skip_export_contacts(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    return await perform_export(update, context, language, person_ids=None)
+
+
+async def perform_export(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    *,
+    person_ids: Optional[Sequence[int]],
+) -> int:
+    await answer_callback(update)
     db: Database = context.bot_data["db"]
 
+    mode = context.user_data.get("export_mode", "all")
+    amount_filter: Optional[str]
+    if mode == "debt":
+        amount_filter = "debt"
+    elif mode == "payment":
+        amount_filter = "payment"
+    else:
+        amount_filter = None
+
     try:
-        rows = await db.export_transactions()
-        buffer = StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(["id", "person_id", "amount", "description", "created_at"])
-        for row in rows:
-            writer.writerow(
-                [
-                    row["id"],
-                    row["person_id"],
-                    row["amount"],
-                    row["description"],
-                    row["created_at"],
-                ]
-            )
+        rows = await db.export_transactions(
+            amount_filter=amount_filter,
+            person_ids=person_ids,
+        )
     except Exception:  # pragma: no cover - defensive logging
         LOGGER.exception("Failed to export transactions")
+        target = get_reply_target(update)
         await target.reply_text(get_text("export_error", language))
         clear_workflow(context)
         await send_main_menu_reply(update, context, language)
-        return
+        return ConversationHandler.END
+
+    if not rows:
+        target = get_reply_target(update)
+        await target.reply_text(get_text("export_no_transactions", language))
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            get_text("export_column_transaction_id", language),
+            get_text("export_column_contact", language),
+            get_text("export_column_contact_id", language),
+            get_text("export_column_type", language),
+            get_text("export_column_amount", language),
+            get_text("export_column_description", language),
+            get_text("export_column_created_at", language),
+        ]
+    )
+
+    for row in rows:
+        amount = float(row["amount"])
+        type_key = (
+            "export_type_label_debt" if amount > 0 else "export_type_label_payment"
+        )
+        writer.writerow(
+            [
+                row["id"],
+                row["person_name"],
+                row["person_id"],
+                get_text(type_key, language),
+                f"{abs(amount):.2f}",
+                row["description"] or "-",
+                row["created_at"],
+            ]
+        )
 
     buffer.seek(0)
     document = BytesIO(buffer.getvalue().encode("utf-8"))
-    document.name = f"transactions-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
 
+    suffix = ""
+    if person_ids:
+        if len(person_ids) == 1:
+            suffix = f"-person-{person_ids[0]}"
+        else:
+            suffix = "-filtered"
+
+    document.name = (
+        f"transactions{suffix}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
+    )
+
+    target = get_reply_target(update)
     await target.reply_document(
         document,
         caption=get_text("export_success", language),
     )
     clear_workflow(context)
     await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
 
 
 def _has_active_workflow(context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -487,6 +623,7 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "person",
         "amount",
         "description",
+        "export_mode",
         "person_state",
         "person_next_state",
         "entry_mode",
@@ -553,8 +690,13 @@ async def prompt_person_selection(
     context.user_data.pop("entry_mode", None)
     await answer_callback(update)
     target = get_reply_target(update)
+    flow = context.user_data.get("flow")
+    if flow == "export":
+        prompt_text = get_text("export_contact_prompt", language)
+    else:
+        prompt_text = get_text("choose_selection_method", language)
     message = await target.reply_text(
-        with_cancel_hint(get_text("choose_selection_method", language), language),
+        with_cancel_hint(prompt_text, language),
         reply_markup=selection_method_keyboard(language),
     )
     _remember_prompt_message(update, context, getattr(message, "message_id", None))
@@ -572,6 +714,14 @@ async def advance_person_workflow(
     next_state = context.user_data.get("person_next_state", ConversationHandler.END)
     flow = context.user_data.get("flow")
     entry_mode = context.user_data.get("entry_mode")
+
+    if flow == "export":
+        return await perform_export(
+            update,
+            context,
+            language,
+            person_ids=[person.id],
+        )
 
     if flow == "debt" and entry_mode == "menu":
         await target.reply_text(
@@ -679,6 +829,8 @@ async def handle_selection_method(
                     get_text("quick_payment_example", language),
                 ]
             )
+        elif flow == "export":
+            message = get_text("export_prompt_person_id", language)
         else:
             message = get_text("prompt_person_id", language)
         await query.answer()
@@ -1203,11 +1355,58 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", show_help))
     application.add_handler(CommandHandler("dashboard", show_dashboard))
-    application.add_handler(CommandHandler("export", export_transactions_handler))
     application.add_handler(CommandHandler("people", show_people_list))
     application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
-    application.add_handler(CallbackQueryHandler(export_transactions_handler, pattern="^menu:export$"))
     application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
+
+    export_conv = ConversationHandler(
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("export", start_export_transactions),
+                CallbackQueryHandler(start_export_transactions, pattern="^menu:export$"),
+            ]
+        ),
+        states={
+            EXPORT_MODE: _wrap_handlers(
+                [
+                    CallbackQueryHandler(handle_export_mode, pattern="^export:mode:"),
+                    CommandHandler("skip", skip_export_contacts),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            EXPORT_CONTACT_CHOICE: _wrap_handlers(
+                [
+                    CallbackQueryHandler(
+                        handle_export_contact_choice, pattern="^export:contacts:"
+                    ),
+                    CommandHandler("skip", skip_export_contacts),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            EXPORT_PERSON: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_person_reference
+                    ),
+                    CommandHandler("skip", skip_export_contacts),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+        },
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
+        name="export",
+    )
+    application.add_handler(export_conv)
 
     add_person_conv = ConversationHandler(
         entry_points=_wrap_handlers(

@@ -388,6 +388,15 @@ async def export_transactions_handler(
     await send_main_menu_reply(update, context, language)
 
 
+def _has_active_workflow(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return ``True`` when the user currently has an active workflow."""
+
+    for key in ("flow", "person_state", "person_next_state", "entry_mode"):
+        if context.user_data.get(key) is not None:
+            return True
+    return False
+
+
 def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
     for key in (
         "flow",
@@ -558,12 +567,12 @@ async def handle_selection_method(
 
     language = await get_language(context, update.effective_user.id)
     payload = query.data.split(":", 1)
+    state = context.user_data.get("person_state", ConversationHandler.END)
     if len(payload) != 2:
         await query.answer()
         return state
     method = payload[1]
     flow = context.user_data.get("flow")
-    state = context.user_data.get("person_state", ConversationHandler.END)
 
     if method == "id":
         context.user_data["entry_mode"] = "id"
@@ -1083,6 +1092,9 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if _has_active_workflow(context):
+        # Let the active conversation continue without interrupting the user.
+        return
     await send_start_message(update, context)
 
 

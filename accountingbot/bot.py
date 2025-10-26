@@ -34,6 +34,7 @@ from .database import (
     PersonUsageStats,
     PersonAlreadyExistsError,
     SearchResponse,
+    _to_int,
 )
 from .keyboards import (
     back_to_main_menu_keyboard,
@@ -629,7 +630,7 @@ async def perform_export(
     )
 
     for row in rows:
-        amount = int(row["amount"])
+        amount = _to_int(row["amount"])
         type_key = (
             "export_type_label_debt" if amount > 0 else "export_type_label_payment"
         )

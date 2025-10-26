@@ -639,7 +639,7 @@ async def perform_export(
                 row["person_name"],
                 row["person_id"],
                 get_text(type_key, language),
-                _format_amount(abs(amount)),
+                abs(amount),
                 row["description"] or "-",
                 row["created_at"],
             ]

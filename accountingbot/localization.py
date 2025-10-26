@@ -105,7 +105,6 @@ _LANGUAGES = {
             "confirmed": "✅ Done!",
             "dismiss": "Close",
             "back": "⬅️ Go Back",
-            "dashboard": "Dashboard",
             "dashboard_summary": "📊 Snapshot Overview",
             "total_debt": "Total charges",
             "total_payments": "Total payments",

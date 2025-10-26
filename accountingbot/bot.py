@@ -1755,7 +1755,7 @@ async def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[logging.FileHandler(config.log_file), logging.StreamHandler()],
     )
-    db = Database(config.database_path)
+    db = Database(config.database_path, backup_config=config.backup)
     await db.initialize()
     application = build_application(config)
     application.bot_data["db"] = db

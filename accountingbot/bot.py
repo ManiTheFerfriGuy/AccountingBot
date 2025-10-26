@@ -31,6 +31,7 @@ from .database import (
     Database,
     InvalidPersonNameError,
     Person,
+    PersonUsageStats,
     PersonAlreadyExistsError,
     SearchResponse,
 )
@@ -137,6 +138,17 @@ def _drop_prompt_message(context: ContextTypes.DEFAULT_TYPE) -> None:
     base_key = context.user_data.pop(_WORKFLOW_PROMPT_KEY, None)
     if base_key is not None:
         _WORKFLOW_PROMPT_MESSAGE_IDS.pop(base_key, None)
+
+
+def _reset_person_menu_context(context: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in (
+        "person_menu_page",
+        "person_menu_results",
+        "person_menu_mode",
+        "person_menu_search_query",
+        "person_menu_search_expected",
+    ):
+        context.user_data.pop(key, None)
 
 
 class _CallbackHandlerWrapper(CallbackQueryHandler):
@@ -627,9 +639,9 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "person_state",
         "person_next_state",
         "entry_mode",
-        "person_menu_page",
     ):
         context.user_data.pop(key, None)
+    _reset_person_menu_context(context)
     _drop_prompt_message(context)
 
 
@@ -759,17 +771,70 @@ async def show_person_menu(
     context: ContextTypes.DEFAULT_TYPE,
     language: str,
     page: int = 0,
+    search_query: Optional[str] = None,
 ) -> int:
     db: Database = context.bot_data["db"]
-    people = await db.list_people_with_usage()
-    if not people:
+    search_mode = False
+    people: Sequence[PersonUsageStats]
+    query_text: Optional[str] = None
+
+    if search_query is not None:
+        all_people = await db.list_people_with_usage()
+        filtered = [
+            entry
+            for entry in all_people
+            if search_query.casefold() in entry.person.name.casefold()
+        ]
+        if not filtered:
+            target = get_reply_target(update)
+            await target.reply_text(get_text("menu_search_no_results", language))
+            _reset_person_menu_context(context)
+            return await show_person_menu(update, context, language, page=0)
+        search_mode = True
+        query_text = search_query
+        people = filtered
+        context.user_data["person_menu_mode"] = "search"
+        context.user_data["person_menu_search_query"] = search_query
+        context.user_data["person_menu_results"] = filtered
+        context.user_data["person_menu_search_expected"] = False
+        page = 0
+    else:
+        mode = context.user_data.get("person_menu_mode")
+        stored_query = context.user_data.get("person_menu_search_query")
+        stored_results = context.user_data.get("person_menu_results")
+        if mode == "search" and stored_query:
+            search_mode = True
+            query_text = stored_query
+            if stored_results is None:
+                all_people = await db.list_people_with_usage()
+                stored_results = [
+                    entry
+                    for entry in all_people
+                    if stored_query.casefold() in entry.person.name.casefold()
+                ]
+                context.user_data["person_menu_results"] = stored_results
+            people = stored_results or []
+        else:
+            people = await db.list_people_with_usage()
+            if not people:
+                target = get_reply_target(update)
+                await target.reply_text(
+                    with_cancel_hint(get_text("no_people", language), language),
+                    reply_markup=cancel_keyboard(language),
+                )
+                context.user_data.pop("entry_mode", None)
+                _reset_person_menu_context(context)
+                return context.user_data.get("person_state", ConversationHandler.END)
+            context.user_data["person_menu_mode"] = "all"
+            context.user_data["person_menu_results"] = people
+            context.user_data.pop("person_menu_search_query", None)
+            context.user_data["person_menu_search_expected"] = False
+
+    if search_mode and not people:
         target = get_reply_target(update)
-        await target.reply_text(
-            with_cancel_hint(get_text("no_people", language), language),
-            reply_markup=cancel_keyboard(language),
-        )
-        context.user_data.pop("entry_mode", None)
-        return context.user_data.get("person_state", ConversationHandler.END)
+        await target.reply_text(get_text("menu_search_no_results", language))
+        _reset_person_menu_context(context)
+        return await show_person_menu(update, context, language, page=0)
 
     total = len(people)
     total_pages = max(1, (total + PERSON_MENU_PAGE_SIZE - 1) // PERSON_MENU_PAGE_SIZE)
@@ -778,11 +843,24 @@ async def show_person_menu(
     end = start + PERSON_MENU_PAGE_SIZE
     current_slice = people[start:end]
 
-    message = with_cancel_hint(
-        get_text("menu_prompt", language).format(page=f"{page + 1}/{total_pages}"),
+    if search_mode and query_text is not None:
+        base_message = get_text("menu_search_results", language).format(
+            query=query_text,
+            count=total,
+            page=f"{page + 1}/{total_pages}",
+        )
+    else:
+        base_message = get_text("menu_prompt", language).format(
+            page=f"{page + 1}/{total_pages}"
+        )
+    message = with_cancel_hint(base_message, language)
+    keyboard = person_menu_keyboard(
+        current_slice,
         language,
+        page,
+        total_pages,
+        search_active=search_mode,
     )
-    keyboard = person_menu_keyboard(current_slice, language, page, total_pages)
 
     query = update.callback_query
     if query and query.message:
@@ -793,6 +871,46 @@ async def show_person_menu(
 
     context.user_data["person_menu_page"] = page
     return context.user_data.get("person_state", ConversationHandler.END)
+
+
+async def handle_person_menu_search(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 1)
+    action = parts[1] if len(parts) == 2 else "start"
+
+    await query.answer()
+
+    if action == "clear":
+        _reset_person_menu_context(context)
+        return await show_person_menu(update, context, language, page=0)
+
+    context.user_data["person_menu_search_expected"] = True
+    target = get_reply_target(update)
+    await target.reply_text(get_text("menu_search_question", language))
+    return context.user_data.get("person_state", ConversationHandler.END)
+
+
+async def _maybe_handle_person_menu_search_message(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> Optional[int]:
+    if not context.user_data.get("person_menu_search_expected"):
+        return None
+
+    language = await get_language(context, update.effective_user.id)
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text(get_text("menu_search_question", language))
+        context.user_data["person_menu_search_expected"] = True
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    context.user_data["person_menu_search_expected"] = False
+    return await show_person_menu(update, context, language, page=0, search_query=text)
 
 
 async def handle_selection_method(
@@ -814,7 +932,7 @@ async def handle_selection_method(
     if method == "id":
         context.user_data["entry_mode"] = "id"
         context.user_data.pop("person", None)
-        context.user_data.pop("person_menu_page", None)
+        _reset_person_menu_context(context)
         if flow == "debt":
             message = "\n".join(
                 [
@@ -844,7 +962,7 @@ async def handle_selection_method(
     if method == "menu":
         context.user_data["entry_mode"] = "menu"
         context.user_data.pop("person", None)
-        context.user_data.pop("person_menu_page", None)
+        _reset_person_menu_context(context)
         await query.answer()
         return await show_person_menu(update, context, language, page=0)
 
@@ -874,6 +992,10 @@ async def handle_person_menu_navigation(
 async def receive_person_reference(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    maybe_state = await _maybe_handle_person_menu_search_message(update, context)
+    if maybe_state is not None:
+        return maybe_state
+
     language = await get_language(context, update.effective_user.id)
     db: Database = context.bot_data["db"]
     text = update.message.text.strip()
@@ -948,6 +1070,7 @@ async def handle_person_selection(
     if not person:
         return await _handle_person_selection_failure(update, context, language)
 
+    _reset_person_menu_context(context)
     return await advance_person_workflow(update, context, person, language)
 
 
@@ -960,6 +1083,10 @@ async def start_add_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    maybe_state = await _maybe_handle_person_menu_search_message(update, context)
+    if maybe_state is not None:
+        return maybe_state
+
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
     entry_mode = context.user_data.get("entry_mode")
@@ -1070,6 +1197,10 @@ async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    maybe_state = await _maybe_handle_person_menu_search_message(update, context)
+    if maybe_state is not None:
+        return maybe_state
+
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
     entry_mode = context.user_data.get("entry_mode")
@@ -1393,6 +1524,9 @@ def register_handlers(application: Application) -> None:
                     CallbackQueryHandler(
                         handle_person_menu_navigation, pattern="^person_page:"
                     ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
+                    ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
@@ -1449,6 +1583,9 @@ def register_handlers(application: Application) -> None:
                     CallbackQueryHandler(
                         handle_person_menu_navigation, pattern="^person_page:"
                     ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
+                    ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
@@ -1479,6 +1616,9 @@ def register_handlers(application: Application) -> None:
                     CallbackQueryHandler(
                         handle_person_menu_navigation, pattern="^person_page:"
                     ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
+                    ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
@@ -1508,6 +1648,9 @@ def register_handlers(application: Application) -> None:
                     CallbackQueryHandler(handle_selection_method, pattern="^method:"),
                     CallbackQueryHandler(
                         handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
                     ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),

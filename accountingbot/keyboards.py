@@ -147,16 +147,37 @@ def person_menu_keyboard(
     language: str,
     page: int,
     total_pages: int,
+    *,
+    search_active: bool,
 ) -> InlineKeyboardMarkup:
-    buttons: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(
-                f"{entry.person.name} (#{entry.person.id})",
-                callback_data=f"select_person:{entry.person.id}",
-            )
-        ]
-        for entry in people
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    search_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            get_text("menu_search_button", language),
+            callback_data="person_search:start",
+        )
     ]
+    if search_active:
+        search_row.append(
+            InlineKeyboardButton(
+                get_text("clear_search", language),
+                callback_data="person_search:clear",
+            )
+        )
+    buttons.append(search_row)
+
+    buttons.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    f"{entry.person.name} (#{entry.person.id})",
+                    callback_data=f"select_person:{entry.person.id}",
+                )
+            ]
+            for entry in people
+        ]
+    )
 
     if total_pages > 1:
         nav_buttons: list[InlineKeyboardButton] = []

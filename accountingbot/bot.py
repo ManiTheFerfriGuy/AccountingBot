@@ -76,10 +76,16 @@ def _parse_positive_amount(text: str) -> Optional[int]:
     return value
 
 
+def _format_integer(value: int) -> str:
+    """Format an integer with digit grouping separators."""
+
+    return f"{value:,}"
+
+
 def _format_amount(amount: int) -> str:
     """Format an integer amount for display without cents."""
 
-    return f"{amount:,}$"
+    return f"{_format_integer(amount)}$"
 
 
 def _conversation_base_key(
@@ -384,7 +390,9 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         clear_workflow(context)
         return
 
-    header = get_text("people_list_header", language).format(count=len(people))
+    header = get_text("people_list_header", language).format(
+        count=_format_integer(len(people))
+    )
     lines = [header]
     lines.extend(f"• {person.name} (#{person.id})" for person in people)
 
@@ -905,12 +913,12 @@ async def show_person_menu(
     if search_mode and query_text is not None:
         base_message = get_text("menu_search_results", language).format(
             query=query_text,
-            count=total,
-            page=f"{page + 1}/{total_pages}",
+            count=_format_integer(total),
+            page=f"{_format_integer(page + 1)}/{_format_integer(total_pages)}",
         )
     else:
         base_message = get_text("menu_prompt", language).format(
-            page=f"{page + 1}/{total_pages}"
+            page=f"{_format_integer(page + 1)}/{_format_integer(total_pages)}"
         )
     message = with_cancel_hint(base_message, language)
     keyboard = person_menu_keyboard(

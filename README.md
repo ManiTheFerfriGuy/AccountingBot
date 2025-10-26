@@ -121,6 +121,10 @@ Keep the Terminal open—you will need it again. Every new Terminal session requ
 | `CPANEL_USERNAME` | Optional. Used with `CPANEL_HOST`. |
 | `CPANEL_API_TOKEN` | Optional. Used with `CPANEL_HOST`. |
 | `CPANEL_VERIFY_SSL` | `true` (set to `false` only if hosting support tells you to). |
+| `DB_BACKUP_ENABLED` | `true`. Set to `false` if you want to turn off automatic database backups. |
+| `DB_BACKUP_DIR` | `Database_Backups`. Change it if you prefer another folder name for backups. |
+| `DB_BACKUP_COMPRESS_AFTER_DAYS` | `7`. After this many days old backups are zipped. Leave blank to keep the raw `.db` files. |
+| `DB_BACKUP_RETENTION_LIMIT` | `30`. The bot keeps this many backups (including `.zip` files) and removes the oldest extras. Leave blank for unlimited. |
 
 3. Save the environment variables (some themes save automatically when you leave the field).
 
@@ -136,6 +140,21 @@ If you want a local copy of the secrets, create `secrets.json` next to `start.py
 ```
 
 Upload it through **File Manager** if you want the server to use it. Environment variables always take priority over the file.
+
+### 6.3 Automatic database backups (optional but recommended)
+
+AccountingBot quietly creates a fresh copy of your database each time you add or edit information. By default it:
+
+1. Stores backups inside `~/accountingbot/Database_Backups/`.
+2. Compresses backups older than 7 days into `.zip` files to save space.
+3. Keeps the 30 most recent backups and deletes older ones.
+
+You can change these numbers with the `DB_BACKUP_*` environment variables listed above. A simple routine is:
+
+* Use **File Manager** or SFTP to download the newest backup when you want an extra copy.
+* Delete old `.zip` files only after you are sure you have the data you need.
+
+If you do not want any automatic backups, set `DB_BACKUP_ENABLED` to `false` and save the change in cPanel.
 
 ---
 
@@ -214,6 +233,24 @@ Tips:
    Press `Ctrl + C` to stop watching.
 
 3. Send a message to your Telegram bot. If it replies, the deployment is working.
+
+---
+
+## 9.1 Learn the basic bot buttons
+Open your bot in Telegram and tap **Start** to see the main menu. Every button also has a matching slash command if you prefer typing.
+
+| Button / command | What it does |
+| --- | --- |
+| **➕ Add Contact** (`/add_person`) | Save a new person and get their numeric ID. |
+| **🧾 Log a Charge** (`/add_debt`) | Record money someone now owes you. You can type `ID amount description` in one line (for example `42 150 Lunch with client`). |
+| **💳 Record a Payment** (`/record_payment`) | Track money that was paid back. The quick format `42 75 Refund` works here too. Use `#` before the ID if you like (for example `#42`). |
+| **📜 View History** (`/history`) | Browse every charge and payment for one contact. Optionally type a date range like `2024-01-01,2024-01-31`. |
+| **📊 Dashboard** (`/dashboard`) | See totals, top balances, and the latest activity. |
+| **👥 All Contacts** (`/people`) | Print the full contact list in chat. |
+| **🌐 Change Language** (`/language`) | Switch between English and فارسی. |
+| **📁 Export Transactions** (`/export`) | Download a CSV file. Pick whether you want all activity, only charges, only payments, or a single contact. |
+
+At any time you can send `/cancel` or tap ✖️ Cancel to stop the current flow.
 
 ---
 

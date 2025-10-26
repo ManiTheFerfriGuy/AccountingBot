@@ -79,7 +79,7 @@ def _parse_positive_amount(text: str) -> Optional[int]:
 def _format_amount(amount: int) -> str:
     """Format an integer amount for display without cents."""
 
-    return f"{amount}"
+    return f"{amount:,}$"
 
 
 def _conversation_base_key(

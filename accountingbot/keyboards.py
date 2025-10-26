@@ -51,6 +51,14 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
     )
 
 
+def back_to_main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard with a single button to return to the main menu."""
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(get_text("back", language), callback_data="menu:back_to_main")]]
+    )
+
+
 def cancel_keyboard(language: str) -> InlineKeyboardMarkup:
     """Inline keyboard with a single cancel button."""
 

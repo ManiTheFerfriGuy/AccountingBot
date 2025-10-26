@@ -562,6 +562,21 @@ class Database:
             for row in rows
         ]
 
+    async def get_transaction_timestamps(self, person_id: int) -> List[datetime]:
+        async with self._connection() as conn:
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                SELECT created_at
+                FROM transactions
+                WHERE person_id = ?
+                ORDER BY created_at
+                """,
+                (person_id,),
+            )
+            rows = await asyncio.to_thread(cursor.fetchall)
+        return [datetime.fromisoformat(row["created_at"]) for row in rows]
+
     async def set_user_language(self, user_id: int, language: str) -> None:
         async with self._connection() as conn:
             await asyncio.to_thread(

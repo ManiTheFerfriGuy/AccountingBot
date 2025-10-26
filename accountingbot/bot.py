@@ -36,6 +36,7 @@ from .database import (
     SearchResponse,
 )
 from .keyboards import (
+    back_to_main_menu_keyboard,
     cancel_keyboard,
     export_contact_keyboard,
     export_mode_keyboard,
@@ -339,9 +340,11 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     db: Database = context.bot_data["db"]
     people = await db.list_people()
     if not people:
-        await target.reply_text(get_text("no_people", language))
+        await target.reply_text(
+            get_text("no_people", language),
+            reply_markup=back_to_main_menu_keyboard(language),
+        )
         clear_workflow(context)
-        await send_main_menu_reply(update, context, language)
         return
 
     header = get_text("people_list_header", language).format(count=len(people))
@@ -359,10 +362,12 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             chunk = candidate
 
     if chunk:
-        await target.reply_text(chunk)
+        await target.reply_text(
+            chunk,
+            reply_markup=back_to_main_menu_keyboard(language),
+        )
 
     clear_workflow(context)
-    await send_main_menu_reply(update, context, language)
 
 
 def compose_start_message(language: str) -> str:
@@ -440,9 +445,16 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await target.reply_text(
         text,
         disable_web_page_preview=True,
+        reply_markup=back_to_main_menu_keyboard(language),
     )
     clear_workflow(context)
-    await send_main_menu_reply(update, context, language)
+
+
+async def go_back_to_main_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    clear_workflow(context)
+    await send_start_message(update, context)
 
 
 async def start_export_transactions(
@@ -1489,6 +1501,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("people", show_people_list))
     application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
     application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
+    application.add_handler(CallbackQueryHandler(go_back_to_main_menu, pattern="^menu:back_to_main$"))
 
     export_conv = ConversationHandler(
         entry_points=_wrap_handlers(

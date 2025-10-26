@@ -9,12 +9,23 @@ import sqlite3
 import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import AsyncIterator, List, Optional, Sequence, Tuple
+from zipfile import ZIP_DEFLATED, ZipFile
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class DatabaseBackupConfig:
+    """Configuration options for automatic database backups."""
+
+    enabled: bool = True
+    directory: str = "Database_Backups"
+    compress_after_days: Optional[int] = 7
+    retention_limit: Optional[int] = 30
 
 
 @dataclass(slots=True)
@@ -114,9 +125,15 @@ class PersonAlreadyExistsError(ValueError):
 class Database:
     """Async wrapper around SQLite for bot operations."""
 
-    def __init__(self, db_path: str | os.PathLike[str] = "accounting.db") -> None:
+    def __init__(
+        self,
+        db_path: str | os.PathLike[str] = "accounting.db",
+        backup_config: Optional[DatabaseBackupConfig] = None,
+    ) -> None:
         self.db_path = Path(db_path)
         self._lock = asyncio.Lock()
+        self._backup_config = backup_config or DatabaseBackupConfig()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def initialize(self) -> None:
         """Initialize the database schema."""
@@ -194,6 +211,7 @@ class Database:
             except sqlite3.IntegrityError as exc:
                 raise PersonAlreadyExistsError(clean_name) from exc
             person_id = cursor.lastrowid
+        self._schedule_backup()
         LOGGER.info("Added person %s with id %s", name, person_id)
         return await self.get_person(person_id)
 
@@ -466,6 +484,7 @@ class Database:
             )
             await asyncio.to_thread(conn.commit)
             transaction_id = cursor.lastrowid
+        self._schedule_backup()
         LOGGER.info(
             "Added transaction for person_id=%s amount=%s description=%s",
             person_id,
@@ -555,7 +574,14 @@ class Database:
                 (user_id, language),
             )
             await asyncio.to_thread(conn.commit)
+        self._schedule_backup()
         LOGGER.info("Set language for user %s to %s", user_id, language)
+
+    async def wait_for_pending_tasks(self) -> None:
+        """Block until all background maintenance tasks have completed."""
+
+        while self._background_tasks:
+            await asyncio.gather(*tuple(self._background_tasks), return_exceptions=True)
 
     async def get_user_language(self, user_id: int) -> str:
         async with self._connection() as conn:
@@ -587,6 +613,128 @@ class Database:
             )
             row = await asyncio.to_thread(cursor.fetchone)
         return float(row[0] if row and row[0] is not None else 0.0)
+
+    def _resolve_backup_directory(self) -> Path:
+        directory = Path(self._backup_config.directory)
+        if not directory.is_absolute():
+            directory = (self.db_path.parent or Path.cwd()) / directory
+        return directory
+
+    def _schedule_backup(self) -> None:
+        if not self._backup_config.enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            LOGGER.warning("No running event loop to schedule database backup")
+            return
+
+        task = loop.create_task(self._run_backup())
+        self._background_tasks.add(task)
+
+        def _on_done(completed: asyncio.Task[None]) -> None:
+            self._background_tasks.discard(completed)
+            try:
+                completed.result()
+            except Exception:  # pragma: no cover - safety net
+                LOGGER.exception("Database backup task failed")
+
+        task.add_done_callback(_on_done)
+
+    async def _run_backup(self) -> None:
+        try:
+            await asyncio.to_thread(self._perform_backup_and_maintenance)
+        except Exception:  # pragma: no cover - safety net
+            LOGGER.exception("Unexpected error while performing database backup")
+
+    def _perform_backup_and_maintenance(self) -> None:
+        backup_dir = self._resolve_backup_directory()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_path = backup_dir / f"Database_{timestamp}.db"
+
+        try:
+            self._backup_database(backup_path)
+        except Exception as exc:
+            LOGGER.exception("Failed to create database backup at %s", backup_path)
+            raise exc
+
+        log_path = self._format_backup_log_path(backup_dir, backup_path)
+        LOGGER.info("Database backup created: %s", log_path)
+
+        try:
+            self._compress_old_backups(backup_dir)
+        except Exception:
+            LOGGER.exception("Failed to compress old database backups")
+
+        try:
+            self._enforce_retention_limit(backup_dir)
+        except Exception:
+            LOGGER.exception("Failed to enforce backup retention policy")
+
+    def _backup_database(self, destination: Path) -> None:
+        with sqlite3.connect(self.db_path) as source, sqlite3.connect(destination) as dest:
+            source.backup(dest)
+
+    def _format_backup_log_path(self, backup_dir: Path, backup_path: Path) -> str:
+        try:
+            return backup_path.relative_to(backup_dir.parent).as_posix()
+        except ValueError:
+            return backup_path.as_posix()
+
+    def _compress_old_backups(self, backup_dir: Path) -> None:
+        days = self._backup_config.compress_after_days
+        if days is None or days <= 0:
+            return
+
+        cutoff = datetime.now() - timedelta(days=days)
+        for db_file in sorted(backup_dir.glob("*.db")):
+            try:
+                mtime = datetime.fromtimestamp(db_file.stat().st_mtime)
+            except OSError:
+                continue
+            if mtime > cutoff:
+                continue
+
+            zip_path = db_file.with_suffix(".zip")
+            try:
+                with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as archive:
+                    archive.write(db_file, arcname=db_file.name)
+                db_file.unlink()
+                LOGGER.info("Compressed database backup: %s", self._format_backup_log_path(backup_dir, zip_path))
+            except Exception:
+                LOGGER.exception("Failed to compress backup %s", db_file)
+
+    def _enforce_retention_limit(self, backup_dir: Path) -> None:
+        limit = self._backup_config.retention_limit
+        if limit is None or limit <= 0:
+            return
+
+        try:
+            files = sorted(
+                [
+                    path
+                    for path in backup_dir.iterdir()
+                    if path.suffix.lower() in {".db", ".zip"}
+                ],
+                key=lambda item: item.stat().st_mtime,
+            )
+        except FileNotFoundError:
+            return
+
+        while len(files) > limit:
+            oldest = files.pop(0)
+            try:
+                oldest.unlink()
+                LOGGER.info(
+                    "Deleted old database backup: %s",
+                    self._format_backup_log_path(backup_dir, oldest),
+                )
+            except FileNotFoundError:
+                continue
+            except OSError:
+                LOGGER.exception("Failed to delete old backup %s", oldest)
 
     async def total_payments(self) -> float:
         async with self._connection() as conn:

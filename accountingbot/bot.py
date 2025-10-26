@@ -58,6 +58,28 @@ from .localization import available_languages, get_text
 # Patched ConversationHandler support for per-message tracking with message updates
 _WORKFLOW_PROMPT_KEY = "_workflow_prompt_key"
 _WORKFLOW_PROMPT_MESSAGE_IDS: dict[Tuple[int, ...], int] = {}
+_AMOUNT_PATTERN = re.compile(r"^\d+$")
+
+
+def _parse_positive_amount(text: str) -> Optional[int]:
+    """Parse and validate a user-provided positive integer amount."""
+
+    cleaned = text.strip()
+    if not cleaned or not _AMOUNT_PATTERN.fullmatch(cleaned):
+        return None
+    try:
+        value = int(cleaned)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _format_amount(amount: int) -> str:
+    """Format an integer amount for display without cents."""
+
+    return f"{amount}"
 
 
 def _conversation_base_key(
@@ -259,11 +281,15 @@ async def answer_callback(update: Update) -> None:
         await update.callback_query.answer()
 
 
-def format_balance_status(balance: float, language: str) -> str:
+def format_balance_status(balance: int, language: str) -> str:
     if balance > 0:
-        return get_text("balance_debtor", language).format(amount=balance)
+        return get_text("balance_debtor", language).format(
+            amount=_format_amount(balance)
+        )
     if balance < 0:
-        return get_text("balance_creditor", language).format(amount=abs(balance))
+        return get_text("balance_creditor", language).format(
+            amount=_format_amount(abs(balance))
+        )
     return get_text("balance_settled", language)
 
 
@@ -295,9 +321,9 @@ def format_dashboard(summary: DashboardSummary, language: str) -> str:
     totals = summary.totals
     lines.extend(
         [
-            f"{get_text('total_debt', language)}: {totals.total_debt:.2f}",
-            f"{get_text('total_payments', language)}: {totals.total_payments:.2f}",
-            f"{get_text('outstanding_balance', language)}: {totals.outstanding_balance:.2f}",
+            f"{get_text('total_debt', language)}: {_format_amount(totals.total_debt)}",
+            f"{get_text('total_payments', language)}: {_format_amount(totals.total_payments)}",
+            f"{get_text('outstanding_balance', language)}: {_format_amount(totals.outstanding_balance)}",
         ]
     )
 
@@ -306,7 +332,7 @@ def format_dashboard(summary: DashboardSummary, language: str) -> str:
         for index, debtor in enumerate(summary.top_debtors, start=1):
             person = debtor.person
             lines.append(
-                f"{index}. {person.name} (#{person.id}) — {debtor.balance:.2f}"
+                f"{index}. {person.name} (#{person.id}) — {_format_amount(debtor.balance)}"
             )
     else:
         lines.append(get_text("no_debtors", language))
@@ -323,7 +349,7 @@ def format_dashboard(summary: DashboardSummary, language: str) -> str:
             lines.append(
                 get_text(template, language).format(
                     name=activity.person_name,
-                    amount=abs(transaction.amount),
+                    amount=_format_amount(abs(transaction.amount)),
                     date=transaction.created_at.strftime("%Y-%m-%d %H:%M"),
                     description=transaction.description or "-",
                 )
@@ -603,7 +629,7 @@ async def perform_export(
     )
 
     for row in rows:
-        amount = float(row["amount"])
+        amount = int(row["amount"])
         type_key = (
             "export_type_label_debt" if amount > 0 else "export_type_label_payment"
         )
@@ -613,7 +639,7 @@ async def perform_export(
                 row["person_name"],
                 row["person_id"],
                 get_text(type_key, language),
-                f"{abs(amount):.2f}",
+                _format_amount(abs(amount)),
                 row["description"] or "-",
                 row["created_at"],
             ]
@@ -1137,11 +1163,8 @@ async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return DEBT_ENTRY
 
-    try:
-        amount = float(raw_amount)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
+    amount = _parse_positive_amount(raw_amount)
+    if amount is None:
         await update.message.reply_text(
             with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
         )
@@ -1159,7 +1182,9 @@ async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
     balance = await db.get_balance(person.id)
     await update.message.reply_text(
         get_text("debt_recorded", language).format(
-            name=person.name, amount=amount, balance=balance
+            name=person.name,
+            amount=_format_amount(amount),
+            balance=_format_amount(balance),
         )
     )
     LOGGER.info(
@@ -1180,11 +1205,8 @@ async def receive_debt_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await cancel(update, context)
 
     text = update.message.text.strip()
-    try:
-        amount = float(text)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
+    amount = _parse_positive_amount(text)
+    if amount is None:
         context.user_data["person_state"] = DEBT_AMOUNT
         await update.message.reply_text(
             with_cancel_hint(get_text("invalid_number", language), language),
@@ -1216,19 +1238,22 @@ async def _complete_menu_debt(
     if not person or amount is None:
         return await cancel(update, context)
 
+    amount_value = int(amount)
     db: Database = context.bot_data["db"]
-    await db.add_transaction(person.id, amount, description)
+    await db.add_transaction(person.id, amount_value, description)
     balance = await db.get_balance(person.id)
     target = get_reply_target(update)
     await target.reply_text(
         get_text("debt_recorded", language).format(
-            name=person.name, amount=amount, balance=balance
+            name=person.name,
+            amount=_format_amount(amount_value),
+            balance=_format_amount(balance),
         )
     )
     LOGGER.info(
         "Debt recorded for person_id=%s amount=%s description=%s",
         person.id,
-        amount,
+        amount_value,
         description,
     )
     clear_workflow(context)
@@ -1283,11 +1308,8 @@ async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return PAYMENT_ENTRY
 
-    try:
-        amount = float(raw_amount)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
+    amount = _parse_positive_amount(raw_amount)
+    if amount is None:
         await update.message.reply_text(
             with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
         )
@@ -1305,7 +1327,9 @@ async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TY
     await db.add_transaction(person.id, stored_amount, description)
     balance = await db.get_balance(person.id)
     await update.message.reply_text(
-        get_text("payment_recorded", language).format(name=person.name, balance=balance)
+        get_text("payment_recorded", language).format(
+            name=person.name, balance=_format_amount(balance)
+        )
     )
     LOGGER.info(
         "Payment recorded for person_id=%s amount=%s description=%s",
@@ -1325,11 +1349,8 @@ async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_T
         return await cancel(update, context)
 
     text = update.message.text.strip()
-    try:
-        amount = float(text)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
+    amount = _parse_positive_amount(text)
+    if amount is None:
         context.user_data["person_state"] = PAYMENT_AMOUNT
         await update.message.reply_text(
             with_cancel_hint(get_text("invalid_number", language), language),
@@ -1362,13 +1383,13 @@ async def _complete_menu_payment(
         return await cancel(update, context)
 
     db: Database = context.bot_data["db"]
-    stored_amount = -abs(float(amount))
+    stored_amount = -abs(int(amount))
     await db.add_transaction(person.id, stored_amount, description)
     balance = await db.get_balance(person.id)
     target = get_reply_target(update)
     await target.reply_text(
         get_text("payment_recorded", language).format(
-            name=person.name, balance=balance
+            name=person.name, balance=_format_amount(balance)
         )
     )
     LOGGER.info(
@@ -1622,7 +1643,7 @@ async def _show_history(
         description = escape(item.description) if item.description else "-"
         lines.append(
             get_text(template, language).format(
-                amount=abs(item.amount),
+                amount=_format_amount(abs(item.amount)),
                 description=description,
                 date=item.created_at.strftime("%Y-%m-%d %H:%M"),
             )

@@ -43,7 +43,7 @@ class Transaction:
 
     id: int
     person_id: int
-    amount: float
+    amount: int
     description: str
     created_at: datetime
 
@@ -57,7 +57,7 @@ class SearchResult:
     """Represents a single person match returned by ``search_people``."""
 
     person: Person
-    balance: float
+    balance: int
     score: float
     matched_keywords: Tuple[str, ...]
 
@@ -77,16 +77,16 @@ class PersonUsageStats:
 
     person: Person
     usage_count: int
-    balance: float
+    balance: int
 
 
 @dataclass(slots=True)
 class DashboardTotals:
     """Aggregated totals used on the dashboard screen."""
 
-    total_debt: float
-    total_payments: float
-    outstanding_balance: float
+    total_debt: int
+    total_payments: int
+    outstanding_balance: int
 
 
 @dataclass(slots=True)
@@ -94,7 +94,7 @@ class DebtorSummary:
     """Represents a debtor entry with their outstanding balance."""
 
     person: Person
-    balance: float
+    balance: int
 
 
 @dataclass(slots=True)
@@ -112,6 +112,16 @@ class DashboardSummary:
     totals: DashboardTotals
     top_debtors: List[DebtorSummary]
     recent_transactions: List[RecentActivity]
+
+
+def _to_int(value: Optional[float | int]) -> int:
+    """Normalize SQLite numeric outputs to integers."""
+
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    return int(round(value))
 
 
 class InvalidPersonNameError(ValueError):
@@ -248,7 +258,7 @@ class Database:
         tokens = [token for token in re.split(r"\s+", query) if token]
         ids: List[int] = []
         keywords: List[str] = []
-        balance_filter: Optional[Tuple[str, Optional[float]]] = None
+        balance_filter: Optional[Tuple[str, Optional[int]]] = None
 
         balance_pattern = re.compile(r"balance(?P<op>[<>]=?|=)(?P<value>-?\d+(?:\.\d+)?)")
 
@@ -262,19 +272,20 @@ class Database:
                 ids.append(int(normalized))
                 continue
             if normalized in {"debtors", "balance>0", "positive"}:
-                balance_filter = (">", 0.0)
+                balance_filter = (">", 0)
                 continue
             if normalized in {"creditors", "balance<0", "negative"}:
-                balance_filter = ("<", 0.0)
+                balance_filter = ("<", 0)
                 continue
             if normalized in {"settled", "balance=0", "zero"}:
-                balance_filter = ("=", 0.0)
+                balance_filter = ("=", 0)
                 continue
             balance_match = balance_pattern.fullmatch(normalized)
             if balance_match:
                 op = balance_match.group("op")
-                value = float(balance_match.group("value"))
-                balance_filter = (op, value)
+                raw_value = float(balance_match.group("value"))
+                if raw_value.is_integer():
+                    balance_filter = (op, int(raw_value))
                 continue
             keywords.append(normalized)
 
@@ -306,19 +317,19 @@ class Database:
             operator, operand = balance_filter
             if operator == ">":
                 sql.append("HAVING balance > ?")
-                params.append(operand if operand is not None else 0.0)
+                params.append(operand if operand is not None else 0)
             elif operator == "<":
                 sql.append("HAVING balance < ?")
-                params.append(operand if operand is not None else 0.0)
+                params.append(operand if operand is not None else 0)
             elif operator == ">=":
                 sql.append("HAVING balance >= ?")
-                params.append(operand if operand is not None else 0.0)
+                params.append(operand if operand is not None else 0)
             elif operator == "<=":
                 sql.append("HAVING balance <= ?")
-                params.append(operand if operand is not None else 0.0)
+                params.append(operand if operand is not None else 0)
             elif operator == "=":
                 sql.append("HAVING ABS(balance - ?) < 1e-6")
-                params.append(operand if operand is not None else 0.0)
+                params.append(operand if operand is not None else 0)
 
         sql.append("ORDER BY ABS(balance) DESC, p.name ASC")
         sql.append("LIMIT ?")
@@ -340,7 +351,7 @@ class Database:
                     name=row["name"],
                     created_at=datetime.fromisoformat(row["created_at"]),
                 )
-                balance = float(row["balance"] or 0.0)
+                balance = _to_int(row["balance"] or 0)
                 norm_name = _normalize_text(person.name)
                 matched_keywords = tuple(
                     keyword for keyword in keywords if keyword in norm_name
@@ -447,7 +458,7 @@ class Database:
                     created_at=datetime.fromisoformat(row["created_at"]),
                 ),
                 usage_count=int(row["usage_count"] or 0),
-                balance=float(row["balance"] or 0.0),
+                balance=_to_int(row["balance"]),
             )
             for row in rows
         ]
@@ -474,7 +485,7 @@ class Database:
         return stats
 
     async def add_transaction(
-        self, person_id: int, amount: float, description: str = ""
+        self, person_id: int, amount: int, description: str = ""
     ) -> Transaction:
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
@@ -510,12 +521,12 @@ class Database:
         return Transaction(
             id=result["id"],
             person_id=result["person_id"],
-            amount=result["amount"],
+            amount=_to_int(result["amount"]),
             description=result["description"],
             created_at=datetime.fromisoformat(result["created_at"]),
         )
 
-    async def get_balance(self, person_id: int) -> float:
+    async def get_balance(self, person_id: int) -> int:
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
                 conn.execute,
@@ -523,7 +534,7 @@ class Database:
                 (person_id,),
             )
             row = await asyncio.to_thread(cursor.fetchone)
-        return float(row["balance"] if row and row["balance"] is not None else 0.0)
+        return _to_int(row["balance"] if row and row["balance"] is not None else 0)
 
     async def get_history(
         self,
@@ -555,7 +566,7 @@ class Database:
             Transaction(
                 id=row["id"],
                 person_id=row["person_id"],
-                amount=row["amount"],
+                amount=_to_int(row["amount"]),
                 description=row["description"],
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
@@ -620,14 +631,14 @@ class Database:
             await asyncio.to_thread(conn.commit)
         LOGGER.info("Deleted person %s", person_id)
 
-    async def total_debt(self) -> float:
+    async def total_debt(self) -> int:
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
                 conn.execute,
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE amount > 0",
             )
             row = await asyncio.to_thread(cursor.fetchone)
-        return float(row[0] if row and row[0] is not None else 0.0)
+        return _to_int(row[0] if row and row[0] is not None else 0)
 
     def _resolve_backup_directory(self) -> Path:
         directory = Path(self._backup_config.directory)
@@ -751,14 +762,14 @@ class Database:
             except OSError:
                 LOGGER.exception("Failed to delete old backup %s", oldest)
 
-    async def total_payments(self) -> float:
+    async def total_payments(self) -> int:
         async with self._connection() as conn:
             cursor = await asyncio.to_thread(
                 conn.execute,
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE amount < 0",
             )
             row = await asyncio.to_thread(cursor.fetchone)
-        return float(row[0] if row and row[0] is not None else 0.0)
+        return _to_int(row[0] if row and row[0] is not None else 0)
 
     async def export_transactions(
         self,
@@ -863,9 +874,9 @@ class Database:
             recent_rows = await asyncio.to_thread(recent_cursor.fetchall)
 
         totals = DashboardTotals(
-            total_debt=float(totals_row["total_debt"]) if totals_row else 0.0,
-            total_payments=float(totals_row["total_payments"]) if totals_row else 0.0,
-            outstanding_balance=float(totals_row["outstanding"]) if totals_row else 0.0,
+            total_debt=_to_int(totals_row["total_debt"] if totals_row else 0),
+            total_payments=_to_int(totals_row["total_payments"] if totals_row else 0),
+            outstanding_balance=_to_int(totals_row["outstanding"] if totals_row else 0),
         )
 
         top_debtors = [
@@ -875,7 +886,7 @@ class Database:
                     name=row["name"],
                     created_at=datetime.fromisoformat(row["created_at"]),
                 ),
-                balance=float(row["balance"] or 0.0),
+                balance=_to_int(row["balance"]),
             )
             for row in debtor_rows
         ]
@@ -885,7 +896,7 @@ class Database:
                 transaction=Transaction(
                     id=row["id"],
                     person_id=row["person_id"],
-                    amount=row["amount"],
+                    amount=_to_int(row["amount"]),
                     description=row["description"],
                     created_at=datetime.fromisoformat(row["created_at"]),
                 ),

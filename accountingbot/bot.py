@@ -51,6 +51,7 @@ from .keyboards import (
     person_menu_keyboard,
     search_results_keyboard,
     selection_method_keyboard,
+    skip_keyboard,
 )
 from .localization import available_languages, get_text
 
@@ -205,7 +206,11 @@ def _wrap_handlers(handlers: Iterable[BaseHandler[Update, ContextTypes.DEFAULT_T
 # Conversation states
 ADD_PERSON_NAME = 1
 DEBT_ENTRY = 10
+DEBT_AMOUNT = 11
+DEBT_DESCRIPTION = 12
 PAYMENT_ENTRY = 20
+PAYMENT_AMOUNT = 21
+PAYMENT_DESCRIPTION = 22
 HISTORY_PERSON, HISTORY_DATES = range(30, 32)
 SEARCH_QUERY = 40
 LANGUAGE_SELECTION = 50
@@ -756,24 +761,30 @@ async def advance_person_workflow(
         )
 
     if flow == "debt" and entry_mode == "menu":
+        context.user_data.pop("amount", None)
+        context.user_data.pop("description", None)
+        context.user_data["person_state"] = DEBT_AMOUNT
         await target.reply_text(
             with_cancel_hint(
-                get_text("menu_enter_debt_details", language).format(name=person.name),
+                get_text("enter_debt_amount", language).format(name=person.name),
                 language,
             ),
             reply_markup=cancel_keyboard(language),
         )
-        return DEBT_ENTRY
+        return DEBT_AMOUNT
 
     if flow == "payment" and entry_mode == "menu":
+        context.user_data.pop("amount", None)
+        context.user_data.pop("description", None)
+        context.user_data["person_state"] = PAYMENT_AMOUNT
         await target.reply_text(
             with_cancel_hint(
-                get_text("menu_enter_payment_details", language).format(name=person.name),
+                get_text("enter_payment_amount", language).format(name=person.name),
                 language,
             ),
             reply_markup=cancel_keyboard(language),
         )
-        return PAYMENT_ENTRY
+        return PAYMENT_AMOUNT
 
     if next_state == HISTORY_DATES:
         message = await target.reply_text(
@@ -1111,54 +1122,6 @@ async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
-    entry_mode = context.user_data.get("entry_mode")
-    selected_person: Optional[Person] = context.user_data.get("person")
-
-    if entry_mode == "menu" and selected_person:
-        parts = text.split(None, 1)
-        if not parts:
-            await update.message.reply_text(
-                with_cancel_hint(
-                    get_text("menu_enter_debt_details", language).format(
-                        name=selected_person.name
-                    ),
-                    language,
-                ),
-                reply_markup=cancel_keyboard(language),
-            )
-            return DEBT_ENTRY
-
-        raw_amount = parts[0]
-        try:
-            amount = float(raw_amount)
-            if amount <= 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text(
-                with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
-            )
-            return DEBT_ENTRY
-
-        description = parts[1].strip() if len(parts) > 1 else ""
-
-        db: Database = context.bot_data["db"]
-        await db.add_transaction(selected_person.id, amount, description)
-        balance = await db.get_balance(selected_person.id)
-        await update.message.reply_text(
-            get_text("debt_recorded", language).format(
-                name=selected_person.name, amount=amount, balance=balance
-            )
-        )
-        LOGGER.info(
-            "Debt recorded for person_id=%s amount=%s description=%s",
-            selected_person.id,
-            amount,
-            description,
-        )
-        clear_workflow(context)
-        await send_main_menu_reply(update, context, language)
-        return ConversationHandler.END
-
     parts = text.split(None, 2)
     if len(parts) < 3:
         await update.message.reply_text(
@@ -1210,6 +1173,86 @@ async def receive_debt_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
+async def receive_debt_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
+    person: Optional[Person] = context.user_data.get("person")
+    if not person:
+        return await cancel(update, context)
+
+    text = update.message.text.strip()
+    try:
+        amount = float(text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        context.user_data["person_state"] = DEBT_AMOUNT
+        await update.message.reply_text(
+            with_cancel_hint(get_text("invalid_number", language), language),
+            reply_markup=cancel_keyboard(language),
+        )
+        return DEBT_AMOUNT
+
+    context.user_data["amount"] = amount
+    context.user_data["person_state"] = DEBT_DESCRIPTION
+    message = with_cancel_hint(
+        get_text("enter_debt_description", language),
+        language,
+    )
+    await update.message.reply_text(
+        message,
+        reply_markup=skip_keyboard(language, "debt_description"),
+    )
+    return DEBT_DESCRIPTION
+
+
+async def _complete_menu_debt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    description: str,
+) -> int:
+    person: Optional[Person] = context.user_data.get("person")
+    amount = context.user_data.get("amount")
+    if not person or amount is None:
+        return await cancel(update, context)
+
+    db: Database = context.bot_data["db"]
+    await db.add_transaction(person.id, amount, description)
+    balance = await db.get_balance(person.id)
+    target = get_reply_target(update)
+    await target.reply_text(
+        get_text("debt_recorded", language).format(
+            name=person.name, amount=amount, balance=balance
+        )
+    )
+    LOGGER.info(
+        "Debt recorded for person_id=%s amount=%s description=%s",
+        person.id,
+        amount,
+        description,
+    )
+    clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
+
+
+async def receive_debt_description(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    description = update.message.text.strip()
+    return await _complete_menu_debt(update, context, language, description)
+
+
+async def skip_debt_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
+    if update.callback_query:
+        await update.callback_query.answer()
+        if update.callback_query.message:
+            await update.callback_query.message.edit_reply_markup(reply_markup=None)
+    return await _complete_menu_debt(update, context, language, "")
+
+
 # ---- Payments ----
 async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     clear_workflow(context)
@@ -1225,55 +1268,6 @@ async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TY
 
     language = await get_language(context, update.effective_user.id)
     text = update.message.text.strip()
-    entry_mode = context.user_data.get("entry_mode")
-    selected_person: Optional[Person] = context.user_data.get("person")
-
-    if entry_mode == "menu" and selected_person:
-        parts = text.split(None, 1)
-        if not parts:
-            await update.message.reply_text(
-                with_cancel_hint(
-                    get_text("menu_enter_payment_details", language).format(
-                        name=selected_person.name
-                    ),
-                    language,
-                ),
-                reply_markup=cancel_keyboard(language),
-            )
-            return PAYMENT_ENTRY
-
-        raw_amount = parts[0]
-        try:
-            amount = float(raw_amount)
-            if amount <= 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text(
-                with_cancel_hint(get_text("quick_entry_invalid_amount", language), language)
-            )
-            return PAYMENT_ENTRY
-
-        description = parts[1].strip() if len(parts) > 1 else ""
-
-        db: Database = context.bot_data["db"]
-        stored_amount = -abs(amount)
-        await db.add_transaction(selected_person.id, stored_amount, description)
-        balance = await db.get_balance(selected_person.id)
-        await update.message.reply_text(
-            get_text("payment_recorded", language).format(
-                name=selected_person.name, balance=balance
-            )
-        )
-        LOGGER.info(
-            "Payment recorded for person_id=%s amount=%s description=%s",
-            selected_person.id,
-            stored_amount,
-            description,
-        )
-        clear_workflow(context)
-        await send_main_menu_reply(update, context, language)
-        return ConversationHandler.END
-
     parts = text.split(None, 2)
     if len(parts) < 3:
         await update.message.reply_text(
@@ -1322,6 +1316,87 @@ async def receive_payment_entry(update: Update, context: ContextTypes.DEFAULT_TY
     clear_workflow(context)
     await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
+
+
+async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
+    person: Optional[Person] = context.user_data.get("person")
+    if not person:
+        return await cancel(update, context)
+
+    text = update.message.text.strip()
+    try:
+        amount = float(text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        context.user_data["person_state"] = PAYMENT_AMOUNT
+        await update.message.reply_text(
+            with_cancel_hint(get_text("invalid_number", language), language),
+            reply_markup=cancel_keyboard(language),
+        )
+        return PAYMENT_AMOUNT
+
+    context.user_data["amount"] = amount
+    context.user_data["person_state"] = PAYMENT_DESCRIPTION
+    message = with_cancel_hint(
+        get_text("enter_payment_description", language),
+        language,
+    )
+    await update.message.reply_text(
+        message,
+        reply_markup=skip_keyboard(language, "payment_description"),
+    )
+    return PAYMENT_DESCRIPTION
+
+
+async def _complete_menu_payment(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    description: str,
+) -> int:
+    person: Optional[Person] = context.user_data.get("person")
+    amount = context.user_data.get("amount")
+    if not person or amount is None:
+        return await cancel(update, context)
+
+    db: Database = context.bot_data["db"]
+    stored_amount = -abs(float(amount))
+    await db.add_transaction(person.id, stored_amount, description)
+    balance = await db.get_balance(person.id)
+    target = get_reply_target(update)
+    await target.reply_text(
+        get_text("payment_recorded", language).format(
+            name=person.name, balance=balance
+        )
+    )
+    LOGGER.info(
+        "Payment recorded for person_id=%s amount=%s description=%s",
+        person.id,
+        stored_amount,
+        description,
+    )
+    clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
+
+
+async def receive_payment_description(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    description = update.message.text.strip()
+    return await _complete_menu_payment(update, context, language, description)
+
+
+async def skip_payment_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
+    if update.callback_query:
+        await update.callback_query.answer()
+        if update.callback_query.message:
+            await update.callback_query.message.edit_reply_markup(reply_markup=None)
+    return await _complete_menu_payment(update, context, language, "")
 
 
 # ---- History ----
@@ -2013,6 +2088,26 @@ def register_handlers(application: Application) -> None:
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             ),
+            DEBT_AMOUNT: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_debt_amount
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            DEBT_DESCRIPTION: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_debt_description
+                    ),
+                    CommandHandler("skip", skip_debt_description),
+                    CallbackQueryHandler(
+                        skip_debt_description, pattern="^skip:debt_description$"
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
         },
         fallbacks=_wrap_handlers(
             [
@@ -2043,6 +2138,26 @@ def register_handlers(application: Application) -> None:
                         handle_person_menu_search, pattern="^person_search"
                     ),
                     CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            PAYMENT_AMOUNT: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_payment_amount
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            PAYMENT_DESCRIPTION: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_payment_description
+                    ),
+                    CommandHandler("skip", skip_payment_description),
+                    CallbackQueryHandler(
+                        skip_payment_description, pattern="^skip:payment_description$"
+                    ),
                     CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             ),

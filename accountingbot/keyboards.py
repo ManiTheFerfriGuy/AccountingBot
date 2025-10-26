@@ -1,7 +1,8 @@
 """Keyboard helpers for AccountingBot."""
 from __future__ import annotations
 
-from typing import Sequence
+from itertools import islice
+from typing import Iterable, Sequence
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -211,6 +212,150 @@ def person_menu_keyboard(
     )
 
     return InlineKeyboardMarkup(buttons)
+
+
+def history_range_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("history_range_today", language),
+                    callback_data="history:range:today",
+                ),
+                InlineKeyboardButton(
+                    get_text("history_range_last_7_days", language),
+                    callback_data="history:range:last7",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("history_range_this_month", language),
+                    callback_data="history:range:this_month",
+                ),
+                InlineKeyboardButton(
+                    get_text("history_range_custom", language),
+                    callback_data="history:range:custom",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("history_range_skip", language),
+                    callback_data="history:range:skip",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def _chunked(iterable: Iterable[str], size: int) -> Iterable[list[str]]:
+    iterator = iter(iterable)
+    while True:
+        chunk = list(islice(iterator, size))
+        if not chunk:
+            return
+        yield chunk
+
+
+def _history_custom_keyboard(
+    language: str,
+    phase: str,
+    level: str,
+    values: Iterable[str],
+    label_fn,
+) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for chunk in _chunked(values, 3):
+        row = [
+            InlineKeyboardButton(
+                label_fn(value),
+                callback_data=f"history:custom:{phase}:{level}:{value}",
+            )
+            for value in chunk
+        ]
+        buttons.append(row)
+    buttons.append(
+        [InlineKeyboardButton(get_text("cancel", language), callback_data="workflow:cancel")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+def history_custom_year_keyboard(
+    language: str, years: Sequence[int], phase: str
+) -> InlineKeyboardMarkup:
+    values = [str(year) for year in years]
+    return _history_custom_keyboard(
+        language,
+        phase,
+        "year",
+        values,
+        label_fn=lambda value: value,
+    )
+
+
+def history_custom_month_keyboard(
+    language: str, months: Sequence[int], phase: str
+) -> InlineKeyboardMarkup:
+    values = [str(month) for month in months]
+    return _history_custom_keyboard(
+        language,
+        phase,
+        "month",
+        values,
+        label_fn=lambda value: f"{int(value):02d}",
+    )
+
+
+def history_custom_day_keyboard(
+    language: str, days: Sequence[int], phase: str
+) -> InlineKeyboardMarkup:
+    values = [str(day) for day in days]
+    return _history_custom_keyboard(
+        language,
+        phase,
+        "day",
+        values,
+        label_fn=lambda value: f"{int(value):02d}",
+    )
+
+
+def history_custom_hour_keyboard(
+    language: str, hours: Sequence[int], phase: str
+) -> InlineKeyboardMarkup:
+    values = [str(hour) for hour in hours]
+    return _history_custom_keyboard(
+        language,
+        phase,
+        "hour",
+        values,
+        label_fn=lambda value: f"{int(value):02d}:00",
+    )
+
+
+def history_confirmation_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("history_confirm_button", language),
+                    callback_data="history:confirm:ok",
+                ),
+                InlineKeyboardButton(
+                    get_text("history_restart_button", language),
+                    callback_data="history:confirm:restart",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
 
 
 def export_mode_keyboard(language: str) -> InlineKeyboardMarkup:

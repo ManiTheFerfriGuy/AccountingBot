@@ -6,7 +6,7 @@ import csv
 import logging
 import re
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from io import BytesIO, StringIO
 from typing import Any, Iterable, Optional, Sequence, Tuple
@@ -40,6 +40,12 @@ from .keyboards import (
     cancel_keyboard,
     export_contact_keyboard,
     export_mode_keyboard,
+    history_confirmation_keyboard,
+    history_custom_day_keyboard,
+    history_custom_hour_keyboard,
+    history_custom_month_keyboard,
+    history_custom_year_keyboard,
+    history_range_keyboard,
     language_keyboard,
     main_menu_keyboard,
     person_menu_keyboard,
@@ -651,6 +657,8 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "person_state",
         "person_next_state",
         "entry_mode",
+        "history_selection",
+        "history_available_datetimes",
     ):
         context.user_data.pop(key, None)
     _reset_person_menu_context(context)
@@ -768,9 +776,11 @@ async def advance_person_workflow(
         return PAYMENT_ENTRY
 
     if next_state == HISTORY_DATES:
-        await target.reply_text(
-            with_cancel_hint(get_text("prompt_date_range", language), language)
+        message = await target.reply_text(
+            with_cancel_hint(get_text("history_choose_range", language), language),
+            reply_markup=history_range_keyboard(language),
         )
+        _remember_prompt_message(update, context, getattr(message, "message_id", None))
         return HISTORY_DATES
 
     if context.user_data.get("person_state") == SEARCH_QUERY:
@@ -1323,31 +1333,208 @@ async def start_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return await prompt_person_selection(update, context)
 
 
-async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def _ensure_history_selection(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
+    selection = context.user_data.get("history_selection")
+    if selection is None:
+        selection = {"phase": "start", "start": {}, "end": {}}
+        context.user_data["history_selection"] = selection
+    else:
+        selection.setdefault("phase", "start")
+        selection.setdefault("start", {})
+        selection.setdefault("end", {})
+    return selection
+
+
+async def _load_history_datetimes(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> Sequence[datetime]:
+    datetimes: Optional[Sequence[datetime]] = context.user_data.get(
+        "history_available_datetimes"
+    )
+    if datetimes is not None:
+        return datetimes
+    db: Database = context.bot_data["db"]
+    person: Person = context.user_data["person"]
+    datetimes = await db.get_transaction_timestamps(person.id)
+    context.user_data["history_available_datetimes"] = datetimes
+    return datetimes
+
+
+def _history_phase_label(language: str, phase: str) -> str:
+    key = "history_phase_start" if phase == "start" else "history_phase_end"
+    return get_text(key, language)
+
+
+def _history_available_years(
+    datetimes: Sequence[datetime], *, min_dt: Optional[datetime] = None
+) -> list[int]:
+    return sorted({dt.year for dt in datetimes if min_dt is None or dt >= min_dt})
+
+
+def _history_available_months(
+    datetimes: Sequence[datetime],
+    year: int,
+    *,
+    min_dt: Optional[datetime] = None,
+) -> list[int]:
+    return sorted(
+        {
+            dt.month
+            for dt in datetimes
+            if dt.year == year and (min_dt is None or dt >= min_dt)
+        }
+    )
+
+
+def _history_available_days(
+    datetimes: Sequence[datetime],
+    year: int,
+    month: int,
+    *,
+    min_dt: Optional[datetime] = None,
+) -> list[int]:
+    return sorted(
+        {
+            dt.day
+            for dt in datetimes
+            if dt.year == year
+            and dt.month == month
+            and (min_dt is None or dt >= min_dt)
+        }
+    )
+
+
+def _history_available_hours(
+    datetimes: Sequence[datetime],
+    year: int,
+    month: int,
+    day: int,
+    *,
+    min_dt: Optional[datetime] = None,
+) -> list[int]:
+    return sorted(
+        {
+            dt.hour
+            for dt in datetimes
+            if dt.year == year
+            and dt.month == month
+            and dt.day == day
+            and (min_dt is None or dt >= min_dt)
+        }
+    )
+
+
+def _history_pick_datetime(
+    datetimes: Sequence[datetime],
+    *,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    min_dt: Optional[datetime] = None,
+    phase: str,
+) -> datetime:
+    candidates = sorted(
+        dt
+        for dt in datetimes
+        if dt.year == year
+        and dt.month == month
+        and dt.day == day
+        and dt.hour == hour
+        and (min_dt is None or dt >= min_dt)
+    )
+    if not candidates:
+        return datetime(year, month, day, hour)
+    return candidates[0] if phase == "start" else candidates[-1]
+
+
+def _format_history_datetime(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
+async def _prompt_history_custom_level(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    *,
+    phase: str,
+    level: str,
+) -> int:
+    datetimes = await _load_history_datetimes(context)
+    selection = _ensure_history_selection(context)
+    min_dt: Optional[datetime] = None
+    if phase == "end":
+        start_dt: Optional[datetime] = selection.get("start", {}).get("datetime")
+        if start_dt is not None:
+            min_dt = start_dt
+
+    query = update.callback_query
+    if query is None:
+        raise RuntimeError("Custom range selection requires a callback query")
+
+    if level == "year":
+        options = _history_available_years(datetimes, min_dt=min_dt)
+        keyboard = history_custom_year_keyboard(language, options, phase)
+    elif level == "month":
+        year = int(selection[phase]["year"])
+        options = _history_available_months(datetimes, year, min_dt=min_dt)
+        keyboard = history_custom_month_keyboard(language, options, phase)
+    elif level == "day":
+        year = int(selection[phase]["year"])
+        month = int(selection[phase]["month"])
+        options = _history_available_days(datetimes, year, month, min_dt=min_dt)
+        keyboard = history_custom_day_keyboard(language, options, phase)
+    elif level == "hour":
+        year = int(selection[phase]["year"])
+        month = int(selection[phase]["month"])
+        day = int(selection[phase]["day"])
+        options = _history_available_hours(
+            datetimes, year, month, day, min_dt=min_dt
+        )
+        keyboard = history_custom_hour_keyboard(language, options, phase)
+    else:
+        raise ValueError(f"Unknown custom selection level: {level}")
+
+    if not options:
+        if phase == "end":
+            selection.setdefault("end", {})["datetime"] = selection["start"]["datetime"]
+            summary = get_text("history_custom_range_summary", language).format(
+                start=_format_history_datetime(selection["start"]["datetime"]),
+                end=_format_history_datetime(selection["end"]["datetime"]),
+            )
+            await query.message.edit_text(
+                with_cancel_hint(summary, language),
+                reply_markup=history_confirmation_keyboard(language),
+            )
+            return HISTORY_DATES
+        raise RuntimeError("No options available for custom range selection")
+
+    phase_label = _history_phase_label(language, phase)
+    prompt = get_text(f"history_custom_select_{level}", language).format(
+        phase=phase_label
+    )
+    await query.message.edit_text(
+        with_cancel_hint(prompt, language), reply_markup=keyboard
+    )
+    return HISTORY_DATES
+
+
+async def _show_history(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> int:
     language = await get_language(context, update.effective_user.id)
     db: Database = context.bot_data["db"]
     person: Person = context.user_data["person"]
-
-    text = update.message.text.strip()
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    if text.lower() != "/skip":
-        try:
-            start_str, end_str = [part.strip() for part in text.split(",", 1)]
-            start_date = datetime.fromisoformat(start_str)
-            end_date = datetime.fromisoformat(end_str)
-        except ValueError:
-            await update.message.reply_text(
-                with_cancel_hint(get_text("invalid_date_range", language), language),
-                reply_markup=cancel_keyboard(language),
-            )
-            return HISTORY_DATES
-
     history = await db.get_history(
         person.id, start_date=start_date, end_date=end_date
     )
+    target = get_reply_target(update)
     if not history:
-        await update.message.reply_text(get_text("history_empty", language))
+        await target.reply_text(get_text("history_empty", language))
         clear_workflow(context)
         await send_main_menu_reply(update, context, language)
         return ConversationHandler.END
@@ -1365,7 +1552,7 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 date=item.created_at.strftime("%Y-%m-%d %H:%M"),
             )
         )
-    await update.message.reply_text(
+    await target.reply_text(
         "\n".join(lines),
         parse_mode=constants.ParseMode.HTML,
         reply_markup=cancel_keyboard(language),
@@ -1373,6 +1560,229 @@ async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     clear_workflow(context)
     await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
+
+
+async def fetch_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    language = await get_language(context, update.effective_user.id)
+    text = update.message.text.strip()
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    if text.lower() != "/skip":
+        try:
+            start_str, end_str = [part.strip() for part in text.split(",", 1)]
+            start_date = datetime.fromisoformat(start_str)
+            end_date = datetime.fromisoformat(end_str)
+        except ValueError:
+            await update.message.reply_text(
+                with_cancel_hint(get_text("invalid_date_range", language), language),
+                reply_markup=cancel_keyboard(language),
+            )
+            return HISTORY_DATES
+    return await _show_history(
+        update, context, start_date=start_date, end_date=end_date
+    )
+
+
+async def handle_history_range_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    await answer_callback(update)
+    query = update.callback_query
+    if query is None:
+        return HISTORY_DATES
+    language = await get_language(context, update.effective_user.id)
+    choice = query.data.split(":", 2)[2]
+
+    now = datetime.now()
+    today_start = datetime(now.year, now.month, now.day)
+    end_of_today = today_start + timedelta(days=1) - timedelta(microseconds=1)
+
+    if choice == "skip":
+        await query.message.edit_text(
+            with_cancel_hint(get_text("history_range_all_records", language), language),
+            reply_markup=None,
+        )
+        return await _show_history(update, context)
+
+    if choice == "custom":
+        datetimes = await _load_history_datetimes(context)
+        if not datetimes:
+            await query.message.edit_text(
+                with_cancel_hint(get_text("history_no_custom_data", language), language),
+                reply_markup=None,
+            )
+            return await _show_history(update, context)
+        selection = _ensure_history_selection(context)
+        selection["phase"] = "start"
+        selection["start"] = {}
+        selection["end"] = {}
+        return await _prompt_history_custom_level(
+            update, context, language, phase="start", level="year"
+        )
+
+    label_map = {
+        "today": get_text("history_range_today", language),
+        "last7": get_text("history_range_last_7_days", language),
+        "this_month": get_text("history_range_this_month", language),
+    }
+
+    if choice == "today":
+        start_date = today_start
+        end_date = end_of_today
+    elif choice == "last7":
+        start_date = today_start - timedelta(days=6)
+        end_date = end_of_today
+    elif choice == "this_month":
+        start_date = today_start.replace(day=1)
+        end_date = end_of_today
+    else:
+        LOGGER.warning("Unknown history range choice: %s", choice)
+        return HISTORY_DATES
+
+    await query.message.edit_text(
+        with_cancel_hint(
+            get_text("history_fetching_range", language).format(
+                label=label_map.get(choice, get_text("history_range_custom", language))
+            ),
+            language,
+        ),
+        reply_markup=None,
+    )
+    return await _show_history(
+        update, context, start_date=start_date, end_date=end_date
+    )
+
+
+async def handle_history_custom_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    await answer_callback(update)
+    query = update.callback_query
+    if query is None or query.data is None:
+        return HISTORY_DATES
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 4)
+    if len(parts) != 5:
+        LOGGER.warning("Invalid custom range payload: %s", query.data)
+        return HISTORY_DATES
+    _, _, phase, level, raw_value = parts
+    selection = _ensure_history_selection(context)
+    phase_bucket = selection.setdefault(phase, {})
+    phase_bucket[level] = int(raw_value)
+
+    order = ["year", "month", "day", "hour"]
+    current_index = order.index(level)
+    if current_index < len(order) - 1:
+        next_level = order[current_index + 1]
+        return await _prompt_history_custom_level(
+            update, context, language, phase=phase, level=next_level
+        )
+
+    datetimes = await _load_history_datetimes(context)
+    year = int(phase_bucket["year"])
+    month = int(phase_bucket["month"])
+    day = int(phase_bucket["day"])
+    hour = int(phase_bucket["hour"])
+    min_dt = selection.get("start", {}).get("datetime") if phase == "end" else None
+    chosen_dt = _history_pick_datetime(
+        datetimes,
+        year=year,
+        month=month,
+        day=day,
+        hour=hour,
+        min_dt=min_dt,
+        phase=phase,
+    )
+    phase_bucket["datetime"] = chosen_dt
+
+    if phase == "start":
+        selection["phase"] = "end"
+        available_years = _history_available_years(datetimes, min_dt=chosen_dt)
+        if not available_years:
+            selection.setdefault("end", {})["datetime"] = chosen_dt
+            summary = get_text("history_custom_range_summary", language).format(
+                start=_format_history_datetime(chosen_dt),
+                end=_format_history_datetime(chosen_dt),
+            )
+            await query.message.edit_text(
+                with_cancel_hint(summary, language),
+                reply_markup=history_confirmation_keyboard(language),
+            )
+            return HISTORY_DATES
+        start_text = get_text("history_custom_start_selected", language).format(
+            start=_format_history_datetime(chosen_dt)
+        )
+        await query.message.edit_text(
+            with_cancel_hint(start_text, language),
+            reply_markup=history_custom_year_keyboard(
+                language, available_years, phase="end"
+            ),
+        )
+        return HISTORY_DATES
+
+    start_dt: Optional[datetime] = selection.get("start", {}).get("datetime")
+    if start_dt and chosen_dt < start_dt:
+        chosen_dt = start_dt
+        phase_bucket["datetime"] = chosen_dt
+    summary = get_text("history_custom_range_summary", language).format(
+        start=_format_history_datetime(start_dt or chosen_dt),
+        end=_format_history_datetime(chosen_dt),
+    )
+    await query.message.edit_text(
+        with_cancel_hint(summary, language),
+        reply_markup=history_confirmation_keyboard(language),
+    )
+    return HISTORY_DATES
+
+
+async def handle_history_confirmation(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    await answer_callback(update)
+    query = update.callback_query
+    if query is None or query.data is None:
+        return HISTORY_DATES
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    action = parts[2] if len(parts) == 3 else ""
+    selection = _ensure_history_selection(context)
+
+    if action == "restart":
+        selection["phase"] = "start"
+        selection["start"] = {}
+        selection["end"] = {}
+        return await _prompt_history_custom_level(
+            update, context, language, phase="start", level="year"
+        )
+
+    if action == "ok":
+        start_dt: Optional[datetime] = selection.get("start", {}).get("datetime")
+        end_dt: Optional[datetime] = selection.get("end", {}).get("datetime")
+        if start_dt is None or end_dt is None:
+            LOGGER.warning("Incomplete custom range selection during confirmation")
+            selection["phase"] = "start"
+            selection["start"] = {}
+            selection["end"] = {}
+            return await _prompt_history_custom_level(
+                update, context, language, phase="start", level="year"
+            )
+        if end_dt < start_dt:
+            end_dt = start_dt
+        await query.message.edit_text(
+            with_cancel_hint(
+                get_text("history_fetching_range", language).format(
+                    label=get_text("history_range_custom", language)
+                ),
+                language,
+            ),
+            reply_markup=None,
+        )
+        return await _show_history(
+            update, context, start_date=start_dt, end_date=end_dt
+        )
+
+    LOGGER.warning("Unknown history confirmation action: %s", action)
+    return HISTORY_DATES
 
 
 # ---- Search ----
@@ -1673,6 +2083,16 @@ def register_handlers(application: Application) -> None:
                 [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_history),
                     CommandHandler("skip", fetch_history),
+                    CallbackQueryHandler(
+                        handle_history_range_selection, pattern="^history:range:"
+                    ),
+                    CallbackQueryHandler(
+                        handle_history_custom_selection, pattern="^history:custom:"
+                    ),
+                    CallbackQueryHandler(
+                        handle_history_confirmation, pattern="^history:confirm:"
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
                 ]
             ),
         },

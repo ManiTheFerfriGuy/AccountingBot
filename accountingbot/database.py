@@ -696,7 +696,7 @@ class Database:
         except Exception:  # pragma: no cover - safety net
             LOGGER.exception("Unexpected error while performing database backup")
 
-    def _perform_backup_and_maintenance(self) -> None:
+    def _perform_backup_and_maintenance(self) -> Path:
         backup_dir = self._resolve_backup_directory()
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -721,6 +721,8 @@ class Database:
             self._enforce_retention_limit(backup_dir)
         except Exception:
             LOGGER.exception("Failed to enforce backup retention policy")
+
+        return backup_path
 
     def _backup_database(self, destination: Path) -> None:
         with sqlite3.connect(self.db_path) as source, sqlite3.connect(destination) as dest:
@@ -933,6 +935,36 @@ class Database:
             top_debtors=top_debtors,
             recent_transactions=recent_transactions,
         )
+
+    async def create_backup_now(self) -> Path:
+        """Create a fresh database backup immediately and return its path."""
+
+        return await asyncio.to_thread(self._perform_backup_and_maintenance)
+
+    async def zip_all_databases(self) -> Path:
+        """Bundle the primary database and stored backups into a single archive."""
+
+        return await asyncio.to_thread(self._create_full_database_archive)
+
+    def _create_full_database_archive(self) -> Path:
+        backup_dir = self._resolve_backup_directory()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        archive_path = backup_dir / f"All_Databases_{timestamp}.zip"
+
+        with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
+            if self.db_path.exists():
+                archive.write(self.db_path, arcname=self.db_path.name)
+
+            for path in sorted(backup_dir.iterdir()):
+                if path == archive_path or not path.is_file():
+                    continue
+                if path.suffix.lower() not in {".db", ".zip"}:
+                    continue
+                archive.write(path, arcname=path.relative_to(backup_dir).as_posix())
+
+        return archive_path
 
 
 def _normalize_text(value: str) -> str:

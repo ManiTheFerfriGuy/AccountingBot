@@ -48,6 +48,7 @@ from .keyboards import (
     history_custom_hour_keyboard,
     history_custom_month_keyboard,
     history_custom_year_keyboard,
+    history_back_to_menu_keyboard,
     history_range_keyboard,
     language_keyboard,
     main_menu_keyboard,
@@ -1988,9 +1989,11 @@ async def _show_history(
     )
     target = get_reply_target(update)
     if not history:
-        await target.reply_text(get_text("history_empty", language))
+        await target.reply_text(
+            get_text("history_empty", language),
+            reply_markup=history_back_to_menu_keyboard(language),
+        )
         clear_workflow(context)
-        await send_main_menu_reply(update, context, language)
         return ConversationHandler.END
 
     lines = [
@@ -2009,10 +2012,9 @@ async def _show_history(
     await target.reply_text(
         "\n".join(lines),
         parse_mode=constants.ParseMode.HTML,
-        reply_markup=cancel_keyboard(language),
+        reply_markup=history_back_to_menu_keyboard(language),
     )
     clear_workflow(context)
-    await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
 

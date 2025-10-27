@@ -11,7 +11,8 @@ from html import escape
 from io import BytesIO, StringIO
 from typing import Any, Iterable, Optional, Sequence, Tuple
 
-from telegram import Update, constants
+from telegram import InlineKeyboardMarkup, InputFile, Update, constants
+from telegram.error import TelegramError
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -38,6 +39,8 @@ from .database import (
 from .keyboards import (
     back_to_main_menu_keyboard,
     cancel_keyboard,
+    contact_management_keyboard,
+    database_management_keyboard,
     export_contact_keyboard,
     export_mode_keyboard,
     history_confirmation_keyboard,
@@ -48,6 +51,7 @@ from .keyboards import (
     history_range_keyboard,
     language_keyboard,
     main_menu_keyboard,
+    management_menu_keyboard,
     manage_person_keyboard,
     person_menu_keyboard,
     search_results_keyboard,
@@ -263,6 +267,7 @@ MAIN_MENU_ACTIONS = (
     "history",
     "dashboard",
     "list_people",
+    "management",
     "manage_person",
     "language",
     "export",
@@ -294,6 +299,30 @@ def get_reply_target(update: Update):
 async def answer_callback(update: Update) -> None:
     if update.callback_query:
         await update.callback_query.answer()
+
+
+async def _send_menu_prompt(
+    update: Update, prompt: str, reply_markup: InlineKeyboardMarkup
+) -> None:
+    target = get_reply_target(update)
+    if update.callback_query and update.callback_query.message:
+        message = update.callback_query.message
+        if message.text is not None:
+            await message.edit_text(prompt, reply_markup=reply_markup)
+            return
+        try:
+            await message.edit_reply_markup(reply_markup=None)
+        except TelegramError:
+            LOGGER.debug(
+                "Failed to clear reply markup for message %s", message.message_id, exc_info=True
+            )
+        chat = message.chat
+        if chat is not None:
+            await chat.send_message(prompt, reply_markup=reply_markup)
+        else:
+            await target.reply_text(prompt, reply_markup=reply_markup)
+        return
+    await target.reply_text(prompt, reply_markup=reply_markup)
 
 
 def format_balance_status(balance: int, language: str) -> str:
@@ -384,6 +413,97 @@ def with_cancel_hint(message: str, language: str) -> str:
     return f"{message}\n\n{cancel_hint}"
 
 
+async def show_management_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    clear_workflow(context)
+    await answer_callback(update)
+    prompt = get_text("management_menu_prompt", language)
+    keyboard = management_menu_keyboard(language)
+    await _send_menu_prompt(update, prompt, keyboard)
+
+
+async def show_contact_management_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    await answer_callback(update)
+    prompt = get_text("contact_management_prompt", language)
+    keyboard = contact_management_keyboard(language)
+    await _send_menu_prompt(update, prompt, keyboard)
+
+
+async def show_database_management_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    await answer_callback(update)
+    prompt = get_text("database_management_prompt", language)
+    keyboard = database_management_keyboard(language)
+    await _send_menu_prompt(update, prompt, keyboard)
+
+
+async def handle_database_backup(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    query = update.callback_query
+    if query:
+        await query.answer()
+    db: Database = context.bot_data["db"]
+    try:
+        backup_path = await db.create_backup_now()
+    except Exception:
+        LOGGER.exception("Failed to create manual database backup")
+        target = get_reply_target(update)
+        await target.reply_text(
+            get_text("database_backup_error", language),
+            reply_markup=database_management_keyboard(language),
+        )
+        return
+
+    with backup_path.open("rb") as handle:
+        document = InputFile(handle, filename=backup_path.name)
+        target = get_reply_target(update)
+        await target.reply_document(
+            document,
+            caption=get_text("database_backup_success", language),
+            reply_markup=database_management_keyboard(language),
+        )
+    LOGGER.info("Manual database backup sent: %s", backup_path)
+
+
+async def handle_database_zip(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    query = update.callback_query
+    if query:
+        await query.answer()
+    db: Database = context.bot_data["db"]
+    try:
+        archive_path = await db.zip_all_databases()
+    except Exception:
+        LOGGER.exception("Failed to build database archive")
+        target = get_reply_target(update)
+        await target.reply_text(
+            get_text("database_zip_error", language),
+            reply_markup=database_management_keyboard(language),
+        )
+        return
+
+    with archive_path.open("rb") as handle:
+        document = InputFile(handle, filename=archive_path.name)
+        target = get_reply_target(update)
+        await target.reply_document(
+            document,
+            caption=get_text("database_zip_success", language),
+            reply_markup=database_management_keyboard(language),
+        )
+    LOGGER.info("Database archive delivered: %s", archive_path)
+
+
 async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     language = await get_language(context, update.effective_user.id)
     if update.callback_query:
@@ -424,13 +544,37 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     clear_workflow(context)
 
 
-async def start_manage_person(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+async def _start_manage_person_flow(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    mode: Optional[str] = None,
 ) -> int:
     clear_workflow(context)
+    context.user_data.pop("manage_mode", None)
+    if mode:
+        context.user_data["manage_mode"] = mode
     context.user_data["flow"] = "manage_person"
     context.user_data["person_state"] = MANAGE_PERSON_SELECT
     return await prompt_person_selection(update, context)
+
+
+async def start_manage_person(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _start_manage_person_flow(update, context)
+
+
+async def start_contact_edit(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _start_manage_person_flow(update, context, mode="edit")
+
+
+async def start_contact_delete(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _start_manage_person_flow(update, context, mode="delete")
 
 
 async def prompt_manage_person_action(
@@ -450,8 +594,42 @@ async def prompt_manage_person_action(
         ),
         language,
     )
-    keyboard = manage_person_keyboard(person.id, language)
     query = update.callback_query
+
+    manage_mode = context.user_data.pop("manage_mode", None)
+    if manage_mode == "edit":
+        context.user_data["person_state"] = MANAGE_PERSON_RENAME
+        prompt = with_cancel_hint(
+            get_text("rename_person_prompt", language).format(
+                name=person.name, id=person.id
+            ),
+            language,
+        )
+        keyboard = cancel_keyboard(language)
+        if query and query.message:
+            await query.message.edit_text(prompt, reply_markup=keyboard)
+        else:
+            target = get_reply_target(update)
+            await target.reply_text(prompt, reply_markup=keyboard)
+        return MANAGE_PERSON_RENAME
+
+    if manage_mode == "delete":
+        context.user_data["person_state"] = MANAGE_PERSON_CONFIRM_DELETE
+        confirm_message = with_cancel_hint(
+            get_text("delete_person_confirm", language).format(
+                name=person.name, id=person.id
+            ),
+            language,
+        )
+        keyboard = confirm_delete_person_keyboard(person.id, language)
+        if query and query.message:
+            await query.message.edit_text(confirm_message, reply_markup=keyboard)
+        else:
+            target = get_reply_target(update)
+            await target.reply_text(confirm_message, reply_markup=keyboard)
+        return MANAGE_PERSON_CONFIRM_DELETE
+
+    keyboard = manage_person_keyboard(person.id, language)
     if query and query.message:
         await query.message.edit_text(message, reply_markup=keyboard)
     else:
@@ -594,9 +772,8 @@ def compose_start_message(language: str) -> str:
         get_text("history", language),
         get_text("dashboard", language),
         get_text("list_people", language),
-        get_text("manage_person", language),
+        get_text("management_menu", language),
         get_text("export_transactions", language),
-        get_text("language", language),
     ]
     lines.extend(f"• {action}" for action in actions)
     lines.append("")
@@ -867,6 +1044,7 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "entry_mode",
         "history_selection",
         "history_available_datetimes",
+        "manage_mode",
     ):
         context.user_data.pop(key, None)
     _reset_person_menu_context(context)
@@ -2186,7 +2364,35 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("dashboard", show_dashboard))
     application.add_handler(CommandHandler("people", show_people_list))
     application.add_handler(CallbackQueryHandler(show_dashboard, pattern="^menu:dashboard$"))
-    application.add_handler(CallbackQueryHandler(show_people_list, pattern="^menu:list_people$"))
+    application.add_handler(
+        CallbackQueryHandler(
+            show_people_list, pattern="^(?:menu:list_people|management:contacts:list)$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(show_management_menu, pattern="^menu:management$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(show_management_menu, pattern="^management:menu$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            show_contact_management_menu, pattern="^management:contacts$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            show_database_management_menu, pattern="^management:database$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            handle_database_backup, pattern="^management:database:backup$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_database_zip, pattern="^management:database:zip$")
+    )
     application.add_handler(CallbackQueryHandler(go_back_to_main_menu, pattern="^menu:back_to_main$"))
 
     export_conv = ConversationHandler(
@@ -2246,6 +2452,8 @@ def register_handlers(application: Application) -> None:
             [
                 CommandHandler("manage_contact", start_manage_person),
                 CallbackQueryHandler(start_manage_person, pattern="^menu:manage_person$"),
+                CallbackQueryHandler(start_contact_edit, pattern="^management:contacts:edit$"),
+                CallbackQueryHandler(start_contact_delete, pattern="^management:contacts:delete$"),
             ]
         ),
         states={
@@ -2513,6 +2721,7 @@ def register_handlers(application: Application) -> None:
                 [
                     CommandHandler("language", start_language),
                     CallbackQueryHandler(start_language, pattern="^menu:language$"),
+                    CallbackQueryHandler(start_language, pattern="^management:language$"),
                 ]
             ),
             states={

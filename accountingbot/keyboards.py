@@ -41,17 +41,12 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    get_text("manage_person", language),
-                    callback_data="menu:manage_person",
+                    get_text("management_menu", language),
+                    callback_data="menu:management",
                 ),
                 InlineKeyboardButton(
                     get_text("export_transactions", language),
                     callback_data="menu:export",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    get_text("language", language), callback_data="menu:language"
                 ),
             ],
         ]
@@ -125,6 +120,96 @@ def confirmation_keyboard(language: str, action: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def management_menu_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for management options."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("language_management", language),
+                    callback_data="management:language",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("contact_management", language),
+                    callback_data="management:contacts",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("database_management", language),
+                    callback_data="management:database",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data="menu:back_to_main"
+                )
+            ],
+        ]
+    )
+
+
+def contact_management_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for contact management options."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("contact_management_view_all", language),
+                    callback_data="management:contacts:list",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("contact_management_edit", language),
+                    callback_data="management:contacts:edit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("contact_management_delete", language),
+                    callback_data="management:contacts:delete",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data="management:menu"
+                )
+            ],
+        ]
+    )
+
+
+def database_management_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for database management options."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("database_management_backup_now", language),
+                    callback_data="management:database:backup",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("database_management_zip_all", language),
+                    callback_data="management:database:zip",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data="management:menu"
                 )
             ],
         ]

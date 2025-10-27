@@ -247,6 +247,7 @@ Open your bot in Telegram and tap **Start** to see the main menu. Every button a
 | **📜 View History** (`/history`) | Browse every charge and payment for one contact. Optionally type a date range like `2024-01-01,2024-01-31`. |
 | **📊 Dashboard** (`/dashboard`) | See totals, top balances, and the latest activity. |
 | **👥 All Contacts** (`/people`) | Print the full contact list in chat. |
+| **✏️ Edit/Delete Contact** (`/manage_contact`) | Rename a contact or delete them (including their history). |
 | **🌐 Change Language** (`/language`) | Switch between English and فارسی. |
 | **📁 Export Transactions** (`/export`) | Download a CSV file. Pick whether you want all activity, only charges, only payments, or a single contact. |
 

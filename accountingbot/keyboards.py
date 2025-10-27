@@ -41,11 +41,17 @@ def main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    get_text("language", language), callback_data="menu:language"
+                    get_text("manage_person", language),
+                    callback_data="menu:manage_person",
                 ),
                 InlineKeyboardButton(
                     get_text("export_transactions", language),
                     callback_data="menu:export",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("language", language), callback_data="menu:language"
                 ),
             ],
         ]
@@ -212,6 +218,54 @@ def person_menu_keyboard(
     )
 
     return InlineKeyboardMarkup(buttons)
+
+
+def manage_person_keyboard(person_id: int, language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard offering actions for a specific contact."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("rename_person", language),
+                    callback_data=f"person_manage:rename:{person_id}",
+                ),
+                InlineKeyboardButton(
+                    get_text("delete_person", language),
+                    callback_data=f"person_manage:delete:{person_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def confirm_delete_person_keyboard(
+    person_id: int, language: str
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("confirm_delete", language),
+                    callback_data=f"person_manage:confirm_delete:{person_id}",
+                ),
+                InlineKeyboardButton(
+                    get_text("go_back", language),
+                    callback_data=f"person_manage:back:{person_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
 
 
 def history_range_keyboard(language: str) -> InlineKeyboardMarkup:

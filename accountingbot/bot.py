@@ -48,9 +48,11 @@ from .keyboards import (
     history_range_keyboard,
     language_keyboard,
     main_menu_keyboard,
+    manage_person_keyboard,
     person_menu_keyboard,
     search_results_keyboard,
     selection_method_keyboard,
+    confirm_delete_person_keyboard,
     skip_keyboard,
 )
 from .localization import available_languages, get_text
@@ -243,6 +245,12 @@ HISTORY_PERSON, HISTORY_DATES = range(30, 32)
 SEARCH_QUERY = 40
 LANGUAGE_SELECTION = 50
 EXPORT_MODE, EXPORT_CONTACT_CHOICE, EXPORT_PERSON = range(60, 63)
+(
+    MANAGE_PERSON_SELECT,
+    MANAGE_PERSON_ACTION,
+    MANAGE_PERSON_RENAME,
+    MANAGE_PERSON_CONFIRM_DELETE,
+) = range(70, 74)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -255,6 +263,7 @@ MAIN_MENU_ACTIONS = (
     "history",
     "dashboard",
     "list_people",
+    "manage_person",
     "language",
     "export",
 )
@@ -415,6 +424,165 @@ async def show_people_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     clear_workflow(context)
 
 
+async def start_manage_person(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    clear_workflow(context)
+    context.user_data["flow"] = "manage_person"
+    context.user_data["person_state"] = MANAGE_PERSON_SELECT
+    return await prompt_person_selection(update, context)
+
+
+async def prompt_manage_person_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    person: Person,
+) -> int:
+    db: Database = context.bot_data["db"]
+    balance = await db.get_balance(person.id)
+    status = format_balance_status(balance, language)
+    message = with_cancel_hint(
+        get_text("manage_person_overview", language).format(
+            name=person.name,
+            id=person.id,
+            status=status,
+        ),
+        language,
+    )
+    keyboard = manage_person_keyboard(person.id, language)
+    query = update.callback_query
+    if query and query.message:
+        await query.message.edit_text(message, reply_markup=keyboard)
+    else:
+        target = get_reply_target(update)
+        await target.reply_text(message, reply_markup=keyboard)
+    context.user_data["person_state"] = MANAGE_PERSON_ACTION
+    return MANAGE_PERSON_ACTION
+
+
+async def handle_manage_person_action(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    action, raw_id = parts[1], parts[2]
+    if not raw_id.isdigit():
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    person_id = int(raw_id)
+    db: Database = context.bot_data["db"]
+    person = await db.get_person(person_id)
+    if not person:
+        await query.answer(get_text("not_found", language), show_alert=True)
+        clear_workflow(context)
+        if query.message:
+            await query.message.edit_text(get_text("not_found", language))
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
+    context.user_data["person"] = person
+
+    if action == "rename":
+        context.user_data["person_state"] = MANAGE_PERSON_RENAME
+        prompt = with_cancel_hint(
+            get_text("rename_person_prompt", language).format(
+                name=person.name, id=person.id
+            ),
+            language,
+        )
+        await query.answer()
+        if query.message:
+            await query.message.edit_text(
+                prompt, reply_markup=cancel_keyboard(language)
+            )
+        return MANAGE_PERSON_RENAME
+
+    if action == "delete":
+        context.user_data["person_state"] = MANAGE_PERSON_CONFIRM_DELETE
+        message = with_cancel_hint(
+            get_text("delete_person_confirm", language).format(
+                name=person.name, id=person.id
+            ),
+            language,
+        )
+        await query.answer()
+        if query.message:
+            await query.message.edit_text(
+                message,
+                reply_markup=confirm_delete_person_keyboard(person.id, language),
+            )
+        return MANAGE_PERSON_CONFIRM_DELETE
+
+    if action == "confirm_delete":
+        await query.answer()
+        await db.delete_person(person.id)
+        confirmation = get_text("delete_person_success", language).format(
+            name=person.name, id=person.id
+        )
+        if query.message:
+            await query.message.edit_text(confirmation)
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
+    if action == "back":
+        await query.answer()
+        return await prompt_manage_person_action(update, context, language, person)
+
+    await query.answer()
+    return context.user_data.get("person_state", ConversationHandler.END)
+
+
+async def receive_person_rename(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    person: Optional[Person] = context.user_data.get("person")
+    if not person:
+        await update.message.reply_text(get_text("not_found", language))
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
+    db: Database = context.bot_data["db"]
+    new_name = update.message.text.strip()
+    try:
+        updated = await db.rename_person(person.id, new_name)
+    except InvalidPersonNameError:
+        await update.message.reply_text(get_text("invalid_person_name", language))
+        return MANAGE_PERSON_RENAME
+    except PersonAlreadyExistsError:
+        await update.message.reply_text(
+            get_text("duplicate_person_name", language).format(name=new_name.strip())
+        )
+        return MANAGE_PERSON_RENAME
+    except ValueError:
+        await update.message.reply_text(get_text("not_found", language))
+        clear_workflow(context)
+        await send_main_menu_reply(update, context, language)
+        return ConversationHandler.END
+
+    context.user_data["person"] = updated
+    await update.message.reply_text(
+        get_text("rename_person_success", language).format(
+            name=updated.name, id=updated.id
+        )
+    )
+    clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
+
+
 def compose_start_message(language: str) -> str:
     lines = [get_text("start_message", language), ""]
     lines.append(get_text("start_command_overview", language))
@@ -426,6 +594,7 @@ def compose_start_message(language: str) -> str:
         get_text("history", language),
         get_text("dashboard", language),
         get_text("list_people", language),
+        get_text("manage_person", language),
         get_text("export_transactions", language),
         get_text("language", language),
     ]
@@ -785,6 +954,9 @@ async def advance_person_workflow(
     next_state = context.user_data.get("person_next_state", ConversationHandler.END)
     flow = context.user_data.get("flow")
     entry_mode = context.user_data.get("entry_mode")
+
+    if flow == "manage_person":
+        return await prompt_manage_person_action(update, context, language, person)
 
     if flow == "export":
         return await perform_export(
@@ -2068,6 +2240,65 @@ def register_handlers(application: Application) -> None:
         name="export",
     )
     application.add_handler(export_conv)
+
+    manage_person_conv = ConversationHandler(
+        entry_points=_wrap_handlers(
+            [
+                CommandHandler("manage_contact", start_manage_person),
+                CallbackQueryHandler(start_manage_person, pattern="^menu:manage_person$"),
+            ]
+        ),
+        states={
+            MANAGE_PERSON_SELECT: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_person_reference
+                    ),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
+                    ),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_PERSON_ACTION: _wrap_handlers(
+                [
+                    CallbackQueryHandler(
+                        handle_manage_person_action, pattern="^person_manage:"
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_PERSON_RENAME: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_person_rename
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_PERSON_CONFIRM_DELETE: _wrap_handlers(
+                [
+                    CallbackQueryHandler(
+                        handle_manage_person_action, pattern="^person_manage:"
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+        },
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
+        name="manage_person",
+    )
+    application.add_handler(manage_person_conv)
 
     add_person_conv = ConversationHandler(
         entry_points=_wrap_handlers(

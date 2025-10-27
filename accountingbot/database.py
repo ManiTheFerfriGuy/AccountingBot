@@ -225,6 +225,29 @@ class Database:
         LOGGER.info("Added person %s with id %s", name, person_id)
         return await self.get_person(person_id)
 
+    async def rename_person(self, person_id: int, new_name: str) -> Person:
+        clean_name = new_name.strip()
+        if not clean_name:
+            raise InvalidPersonNameError("Name cannot be empty")
+        async with self._connection() as conn:
+            try:
+                cursor = await asyncio.to_thread(
+                    conn.execute,
+                    "UPDATE people SET name = ? WHERE id = ?",
+                    (clean_name, person_id),
+                )
+                await asyncio.to_thread(conn.commit)
+            except sqlite3.IntegrityError as exc:
+                raise PersonAlreadyExistsError(clean_name) from exc
+        if cursor.rowcount == 0:
+            raise ValueError(f"Person {person_id} does not exist")
+        self._schedule_backup()
+        LOGGER.info("Renamed person %s to %s", person_id, clean_name)
+        person = await self.get_person(person_id)
+        if not person:
+            raise ValueError(f"Person {person_id} does not exist")
+        return person
+
     async def get_person(self, person_id: int) -> Optional[Person]:
         async with self._connection() as conn:
             row = await asyncio.to_thread(

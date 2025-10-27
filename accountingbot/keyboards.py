@@ -61,6 +61,21 @@ def back_to_main_menu_keyboard(language: str) -> InlineKeyboardMarkup:
     )
 
 
+def history_back_to_menu_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard prompting the user to return to the main menu after history results."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("history_back_to_menu", language),
+                    callback_data="menu:back_to_main",
+                )
+            ]
+        ]
+    )
+
+
 def cancel_keyboard(language: str) -> InlineKeyboardMarkup:
     """Inline keyboard with a single cancel button."""
 

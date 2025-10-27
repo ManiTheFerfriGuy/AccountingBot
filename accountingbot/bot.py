@@ -11,7 +11,8 @@ from html import escape
 from io import BytesIO, StringIO
 from typing import Any, Iterable, Optional, Sequence, Tuple
 
-from telegram import InputFile, Update, constants
+from telegram import InlineKeyboardMarkup, InputFile, Update, constants
+from telegram.error import TelegramError
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -300,6 +301,30 @@ async def answer_callback(update: Update) -> None:
         await update.callback_query.answer()
 
 
+async def _send_menu_prompt(
+    update: Update, prompt: str, reply_markup: InlineKeyboardMarkup
+) -> None:
+    target = get_reply_target(update)
+    if update.callback_query and update.callback_query.message:
+        message = update.callback_query.message
+        if message.text is not None:
+            await message.edit_text(prompt, reply_markup=reply_markup)
+            return
+        try:
+            await message.edit_reply_markup(reply_markup=None)
+        except TelegramError:
+            LOGGER.debug(
+                "Failed to clear reply markup for message %s", message.message_id, exc_info=True
+            )
+        chat = message.chat
+        if chat is not None:
+            await chat.send_message(prompt, reply_markup=reply_markup)
+        else:
+            await target.reply_text(prompt, reply_markup=reply_markup)
+        return
+    await target.reply_text(prompt, reply_markup=reply_markup)
+
+
 def format_balance_status(balance: int, language: str) -> str:
     if balance > 0:
         return get_text("balance_debtor", language).format(
@@ -394,15 +419,9 @@ async def show_management_menu(
     language = await get_language(context, update.effective_user.id)
     clear_workflow(context)
     await answer_callback(update)
-    target = get_reply_target(update)
     prompt = get_text("management_menu_prompt", language)
     keyboard = management_menu_keyboard(language)
-    if update.callback_query and update.callback_query.message:
-        await update.callback_query.message.edit_text(
-            prompt, reply_markup=keyboard
-        )
-    else:
-        await target.reply_text(prompt, reply_markup=keyboard)
+    await _send_menu_prompt(update, prompt, keyboard)
 
 
 async def show_contact_management_menu(
@@ -410,15 +429,9 @@ async def show_contact_management_menu(
 ) -> None:
     language = await get_language(context, update.effective_user.id)
     await answer_callback(update)
-    target = get_reply_target(update)
     prompt = get_text("contact_management_prompt", language)
     keyboard = contact_management_keyboard(language)
-    if update.callback_query and update.callback_query.message:
-        await update.callback_query.message.edit_text(
-            prompt, reply_markup=keyboard
-        )
-    else:
-        await target.reply_text(prompt, reply_markup=keyboard)
+    await _send_menu_prompt(update, prompt, keyboard)
 
 
 async def show_database_management_menu(
@@ -426,15 +439,9 @@ async def show_database_management_menu(
 ) -> None:
     language = await get_language(context, update.effective_user.id)
     await answer_callback(update)
-    target = get_reply_target(update)
     prompt = get_text("database_management_prompt", language)
     keyboard = database_management_keyboard(language)
-    if update.callback_query and update.callback_query.message:
-        await update.callback_query.message.edit_text(
-            prompt, reply_markup=keyboard
-        )
-    else:
-        await target.reply_text(prompt, reply_markup=keyboard)
+    await _send_menu_prompt(update, prompt, keyboard)
 
 
 async def handle_database_backup(

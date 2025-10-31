@@ -527,6 +527,71 @@ class Database:
         )
         return await self.get_transaction(transaction_id)
 
+    async def list_person_descriptions(self, person_id: int) -> List[str]:
+        """Return distinct non-empty descriptions used for a person."""
+
+        async with self._connection() as conn:
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                SELECT DISTINCT TRIM(description) AS description
+                FROM transactions
+                WHERE person_id = ? AND TRIM(description) <> ''
+                ORDER BY LOWER(description)
+                """,
+                (person_id,),
+            )
+            rows = await asyncio.to_thread(cursor.fetchall)
+        return [row["description"] for row in rows if row["description"]]
+
+    async def update_person_description(
+        self, person_id: int, old_description: str, new_description: str
+    ) -> int:
+        """Replace a person's description across their transactions."""
+
+        clean_new = new_description.strip()
+        async with self._connection() as conn:
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                UPDATE transactions
+                SET description = ?
+                WHERE person_id = ? AND description = ?
+                """,
+                (clean_new, person_id, old_description),
+            )
+            await asyncio.to_thread(conn.commit)
+        self._schedule_backup()
+        LOGGER.info(
+            "Updated description for person_id=%s from %s to %s",
+            person_id,
+            old_description,
+            clean_new,
+        )
+        return cursor.rowcount
+
+    async def clear_person_description(
+        self, person_id: int, description: str
+    ) -> int:
+        """Remove a description from all of a person's transactions."""
+
+        async with self._connection() as conn:
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                """
+                UPDATE transactions
+                SET description = ''
+                WHERE person_id = ? AND description = ?
+                """,
+                (person_id, description),
+            )
+            await asyncio.to_thread(conn.commit)
+        self._schedule_backup()
+        LOGGER.info(
+            "Cleared description for person_id=%s value=%s", person_id, description
+        )
+        return cursor.rowcount
+
     async def get_transaction(self, transaction_id: int) -> Optional[Transaction]:
         async with self._connection() as conn:
             row = await asyncio.to_thread(

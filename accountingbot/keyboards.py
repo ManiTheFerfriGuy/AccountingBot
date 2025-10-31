@@ -160,6 +160,12 @@ def management_menu_keyboard(language: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    get_text("description_management", language),
+                    callback_data="management:descriptions",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     get_text("database_management", language),
                     callback_data="management:database",
                 )
@@ -225,6 +231,114 @@ def database_management_keyboard(language: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     get_text("back", language), callback_data="management:menu"
+                )
+            ],
+        ]
+    )
+
+
+def description_management_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for description management options."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("description_management_edit", language),
+                    callback_data="management:descriptions:edit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("description_management_delete", language),
+                    callback_data="management:descriptions:delete",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data="management:menu"
+                )
+            ],
+        ]
+    )
+
+
+def person_description_keyboard(
+    descriptions: Sequence[str], language: str
+) -> InlineKeyboardMarkup:
+    """Inline keyboard listing descriptions for a person."""
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    for index, description in enumerate(descriptions):
+        label = description.strip() or get_text("description_management_empty", language)
+        label = label.replace("\n", " ")
+        if len(label) > 32:
+            label = label[:29] + "..."
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"description:select:{index}",
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                get_text("back", language), callback_data="description:back_contact"
+            )
+        ]
+    )
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                get_text("cancel", language), callback_data="workflow:cancel"
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+def description_delete_confirmation_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard prompting the user to confirm description deletion."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("confirm_delete", language),
+                    callback_data="description:delete:confirm",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("back", language),
+                    callback_data="description:delete:back",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def description_edit_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Inline keyboard shown while editing a description."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    get_text("back", language), callback_data="description:back_list"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text("cancel", language), callback_data="workflow:cancel"
                 )
             ],
         ]

@@ -40,6 +40,9 @@ from .keyboards import (
     back_to_main_menu_keyboard,
     cancel_keyboard,
     contact_management_keyboard,
+    description_delete_confirmation_keyboard,
+    description_edit_keyboard,
+    description_management_keyboard,
     database_management_keyboard,
     export_contact_keyboard,
     export_mode_keyboard,
@@ -54,6 +57,7 @@ from .keyboards import (
     main_menu_keyboard,
     management_menu_keyboard,
     manage_person_keyboard,
+    person_description_keyboard,
     person_menu_keyboard,
     search_results_keyboard,
     selection_method_keyboard,
@@ -93,6 +97,15 @@ def _format_amount(amount: int) -> str:
     """Format an integer amount for display without cents."""
 
     return f"{_format_integer(amount)}$"
+
+
+def _get_description_label(description: str, language: str) -> str:
+    """Return a human-friendly label for a stored transaction description."""
+
+    cleaned = description.strip()
+    if not cleaned:
+        return get_text("description_management_empty", language)
+    return cleaned
 
 
 def _conversation_base_key(
@@ -256,6 +269,13 @@ EXPORT_MODE, EXPORT_CONTACT_CHOICE, EXPORT_PERSON = range(60, 63)
     MANAGE_PERSON_RENAME,
     MANAGE_PERSON_CONFIRM_DELETE,
 ) = range(70, 74)
+
+(
+    MANAGE_DESCRIPTION_SELECT,
+    MANAGE_DESCRIPTION_CHOOSE,
+    MANAGE_DESCRIPTION_EDIT,
+    MANAGE_DESCRIPTION_CONFIRM_DELETE,
+) = range(80, 84)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -435,6 +455,16 @@ async def show_contact_management_menu(
     await _send_menu_prompt(update, prompt, keyboard)
 
 
+async def show_description_management_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    language = await get_language(context, update.effective_user.id)
+    await answer_callback(update)
+    prompt = get_text("description_management_prompt", language)
+    keyboard = description_management_keyboard(language)
+    await _send_menu_prompt(update, prompt, keyboard)
+
+
 async def show_database_management_menu(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -576,6 +606,30 @@ async def start_contact_delete(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     return await _start_manage_person_flow(update, context, mode="delete")
+
+
+async def _start_manage_description_flow(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, mode: str
+) -> int:
+    clear_workflow(context)
+    context.user_data["flow"] = "manage_description"
+    context.user_data["description_mode"] = mode
+    context.user_data["person_state"] = MANAGE_DESCRIPTION_SELECT
+    context.user_data.pop("person_descriptions", None)
+    context.user_data.pop("selected_description", None)
+    return await prompt_person_selection(update, context)
+
+
+async def start_description_edit(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _start_manage_description_flow(update, context, mode="edit")
+
+
+async def start_description_delete(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _start_manage_description_flow(update, context, mode="delete")
 
 
 async def prompt_manage_person_action(
@@ -761,6 +815,257 @@ async def receive_person_rename(
     await send_main_menu_reply(update, context, language)
     return ConversationHandler.END
 
+
+async def prompt_manage_description_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    person: Person,
+    mode: str,
+) -> int:
+    return await _show_description_list(update, context, language, person, mode)
+
+
+async def _show_description_list(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+    person: Person,
+    mode: str,
+) -> int:
+    db: Database = context.bot_data["db"]
+    descriptions = await db.list_person_descriptions(person.id)
+    if not descriptions:
+        target = get_reply_target(update)
+        await target.reply_text(
+            get_text("description_management_no_descriptions", language).format(
+                name=person.name
+            )
+        )
+        context.user_data["person_state"] = MANAGE_DESCRIPTION_SELECT
+        context.user_data.pop("person_descriptions", None)
+        context.user_data.pop("selected_description", None)
+        context.user_data.pop("person", None)
+        _reset_person_menu_context(context)
+        return await prompt_person_selection(update, context)
+
+    context.user_data["person_descriptions"] = descriptions
+    context.user_data.pop("selected_description", None)
+    prompt_key = (
+        "description_management_choose_edit"
+        if mode == "edit"
+        else "description_management_choose_delete"
+    )
+    message = with_cancel_hint(
+        get_text(prompt_key, language).format(name=person.name),
+        language,
+    )
+    keyboard = person_description_keyboard(descriptions, language)
+    query = update.callback_query
+    if query and query.message:
+        await query.message.edit_text(message, reply_markup=keyboard)
+    else:
+        target = get_reply_target(update)
+        await target.reply_text(message, reply_markup=keyboard)
+    context.user_data["person_state"] = MANAGE_DESCRIPTION_CHOOSE
+    return MANAGE_DESCRIPTION_CHOOSE
+
+
+async def handle_description_choice(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    if len(parts) < 2:
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    action = parts[1]
+    person: Optional[Person] = context.user_data.get("person")
+    mode = context.user_data.get("description_mode", "edit")
+
+    if action == "back_contact":
+        await query.answer()
+        context.user_data["person_state"] = MANAGE_DESCRIPTION_SELECT
+        context.user_data.pop("person", None)
+        context.user_data.pop("person_descriptions", None)
+        context.user_data.pop("selected_description", None)
+        _reset_person_menu_context(context)
+        return await prompt_person_selection(update, context)
+
+    if action != "select" or len(parts) != 3:
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    if not person:
+        return await cancel(update, context)
+
+    try:
+        index = int(parts[2])
+    except ValueError:
+        await query.answer(get_text("not_found", language), show_alert=True)
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    descriptions: Sequence[str] = context.user_data.get("person_descriptions", [])
+    if index < 0 or index >= len(descriptions):
+        await query.answer(get_text("not_found", language), show_alert=True)
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    selected = descriptions[index]
+    context.user_data["selected_description"] = selected
+    label = _get_description_label(selected, language)
+
+    if mode == "delete":
+        message = with_cancel_hint(
+            get_text("description_management_delete_confirm", language).format(
+                name=person.name, description=label
+            ),
+            language,
+        )
+        keyboard = description_delete_confirmation_keyboard(language)
+        await query.answer()
+        if query.message:
+            await query.message.edit_text(message, reply_markup=keyboard)
+        context.user_data["person_state"] = MANAGE_DESCRIPTION_CONFIRM_DELETE
+        return MANAGE_DESCRIPTION_CONFIRM_DELETE
+
+    message = with_cancel_hint(
+        get_text("description_management_edit_prompt", language).format(
+            name=person.name, description=label
+        ),
+        language,
+    )
+    keyboard = description_edit_keyboard(language)
+    await query.answer()
+    if query.message:
+        await query.message.edit_text(message, reply_markup=keyboard)
+    context.user_data["person_state"] = MANAGE_DESCRIPTION_EDIT
+    return MANAGE_DESCRIPTION_EDIT
+
+
+async def handle_description_back_to_list(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    person: Optional[Person] = context.user_data.get("person")
+    if not person:
+        return await cancel(update, context)
+
+    await query.answer()
+    context.user_data.pop("selected_description", None)
+    mode = context.user_data.get("description_mode", "edit")
+    return await _show_description_list(update, context, language, person, mode)
+
+
+async def handle_description_delete_confirmation(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if not query or not query.data:
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    language = await get_language(context, update.effective_user.id)
+    parts = query.data.split(":", 2)
+    if len(parts) != 3 or parts[1] != "delete":
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    action = parts[2]
+    person: Optional[Person] = context.user_data.get("person")
+    selected = context.user_data.get("selected_description")
+    if not person or selected is None:
+        return await cancel(update, context)
+
+    if action == "back":
+        await query.answer()
+        context.user_data.pop("selected_description", None)
+        return await _show_description_list(
+            update, context, language, person, context.user_data.get("description_mode", "delete")
+        )
+
+    if action != "confirm":
+        await query.answer()
+        return context.user_data.get("person_state", ConversationHandler.END)
+
+    db: Database = context.bot_data["db"]
+    affected = await db.clear_person_description(person.id, selected)
+    if affected == 0:
+        await query.answer()
+        if query.message:
+            await query.message.edit_text(
+                with_cancel_hint(
+                    get_text("description_management_not_found", language), language
+                )
+            )
+        context.user_data.pop("selected_description", None)
+        return await _show_description_list(
+            update, context, language, person, context.user_data.get("description_mode", "delete")
+        )
+
+    await query.answer()
+    success = get_text("description_management_delete_success", language).format(
+        name=person.name, description=_get_description_label(selected, language)
+    )
+    if query.message:
+        await query.message.edit_text(success)
+    LOGGER.info(
+        "Cleared description '%s' for person_id=%s", selected, person.id
+    )
+    clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
+
+
+async def receive_description_edit(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    language = await get_language(context, update.effective_user.id)
+    person: Optional[Person] = context.user_data.get("person")
+    selected = context.user_data.get("selected_description")
+    if not person or selected is None:
+        return await cancel(update, context)
+
+    new_value = update.message.text.strip()
+    if not new_value:
+        await update.message.reply_text(
+            with_cancel_hint(
+                get_text("description_management_invalid_new_value", language),
+                language,
+            )
+        )
+        return MANAGE_DESCRIPTION_EDIT
+
+    db: Database = context.bot_data["db"]
+    affected = await db.update_person_description(person.id, selected, new_value)
+    if affected == 0:
+        await update.message.reply_text(
+            get_text("description_management_not_found", language)
+        )
+        return await _show_description_list(
+            update, context, language, person, context.user_data.get("description_mode", "edit")
+        )
+
+    confirmation = get_text("description_management_edit_success", language).format(
+        name=person.name
+    )
+    await update.message.reply_text(confirmation)
+    LOGGER.info(
+        "Updated description for person_id=%s from '%s' to '%s'",
+        person.id,
+        selected,
+        new_value.strip(),
+    )
+    clear_workflow(context)
+    await send_main_menu_reply(update, context, language)
+    return ConversationHandler.END
 
 def compose_start_message(language: str) -> str:
     lines = [get_text("start_message", language), ""]
@@ -1046,6 +1351,9 @@ def clear_workflow(context: ContextTypes.DEFAULT_TYPE) -> None:
         "history_selection",
         "history_available_datetimes",
         "manage_mode",
+        "description_mode",
+        "person_descriptions",
+        "selected_description",
     ):
         context.user_data.pop(key, None)
     _reset_person_menu_context(context)
@@ -1136,6 +1444,12 @@ async def advance_person_workflow(
 
     if flow == "manage_person":
         return await prompt_manage_person_action(update, context, language, person)
+
+    if flow == "manage_description":
+        mode = context.user_data.get("description_mode", "edit")
+        return await prompt_manage_description_action(
+            update, context, language, person, mode
+        )
 
     if flow == "export":
         return await perform_export(
@@ -2384,6 +2698,11 @@ def register_handlers(application: Application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(
+            show_description_management_menu, pattern="^management:descriptions$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
             show_database_management_menu, pattern="^management:database$"
         )
     )
@@ -2509,6 +2828,74 @@ def register_handlers(application: Application) -> None:
         name="manage_person",
     )
     application.add_handler(manage_person_conv)
+
+    manage_description_conv = ConversationHandler(
+        entry_points=_wrap_handlers(
+            [
+                CallbackQueryHandler(
+                    start_description_edit, pattern="^management:descriptions:edit$"
+                ),
+                CallbackQueryHandler(
+                    start_description_delete, pattern="^management:descriptions:delete$"
+                ),
+            ]
+        ),
+        states={
+            MANAGE_DESCRIPTION_SELECT: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_person_reference
+                    ),
+                    CallbackQueryHandler(handle_selection_method, pattern="^method:"),
+                    CallbackQueryHandler(
+                        handle_person_menu_navigation, pattern="^person_page:"
+                    ),
+                    CallbackQueryHandler(
+                        handle_person_menu_search, pattern="^person_search"
+                    ),
+                    CallbackQueryHandler(handle_person_selection, pattern="^select_person:"),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_DESCRIPTION_CHOOSE: _wrap_handlers(
+                [
+                    CallbackQueryHandler(
+                        handle_description_choice,
+                        pattern="^description:(?:select|back_contact)",
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_DESCRIPTION_EDIT: _wrap_handlers(
+                [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_description_edit
+                    ),
+                    CallbackQueryHandler(
+                        handle_description_back_to_list, pattern="^description:back_list$"
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+            MANAGE_DESCRIPTION_CONFIRM_DELETE: _wrap_handlers(
+                [
+                    CallbackQueryHandler(
+                        handle_description_delete_confirmation,
+                        pattern="^description:delete:",
+                    ),
+                    CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+                ]
+            ),
+        },
+        fallbacks=_wrap_handlers(
+            [
+                CommandHandler("cancel", cancel),
+                CallbackQueryHandler(cancel, pattern="^workflow:cancel$"),
+            ]
+        ),
+        name="manage_description",
+    )
+    application.add_handler(manage_description_conv)
 
     add_person_conv = ConversationHandler(
         entry_points=_wrap_handlers(
